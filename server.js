@@ -153,27 +153,54 @@ const SOLANA_TRANSACTION_FEE = 0.000005; // Approximate Solana transaction fee
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Configure CORS for all routes
+// Configure CORS for all routes - more permissive approach
 app.use(cors({
-    origin: ['http://localhost:5173', 'http://localhost:3000', 'https://wagerfi.netlify.app', 'https://wagerfi.vercel.app', 'https://wagerfi.gg'],
+    origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps or curl requests)
+        if (!origin) return callback(null, true);
+
+        const allowedOrigins = [
+            'http://localhost:5173',
+            'http://localhost:3000',
+            'https://wagerfi.netlify.app',
+            'https://wagerfi.vercel.app',
+            'https://wagerfi.gg'
+        ];
+
+        if (allowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true);
+        } else {
+            console.log(`🚫 CORS blocked origin: ${origin}`);
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Origin', 'Accept'],
-    optionsSuccessStatus: 200
+    optionsSuccessStatus: 200,
+    preflightContinue: false
 }));
 
 // Additional CORS headers for preflight requests
 app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', req.headers.origin);
+    const origin = req.headers.origin;
+
+    if (origin) {
+        res.header('Access-Control-Allow-Origin', origin);
+    }
+
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
     res.header('Access-Control-Allow-Credentials', 'true');
 
+    // Handle preflight requests
     if (req.method === 'OPTIONS') {
-        res.sendStatus(200);
-    } else {
-        next();
+        console.log(`🔄 CORS preflight request from: ${origin}`);
+        res.status(200).end();
+        return;
     }
+
+    next();
 });
 
 app.use(express.json());
@@ -186,6 +213,16 @@ app.get('/health', (req, res) => {
         service: 'wagerfi-background-worker',
         version: '1.0.0',
         authority: authorityKeypair.publicKey.toString()
+    });
+});
+
+// CORS test endpoint
+app.get('/cors-test', (req, res) => {
+    console.log(`🧪 CORS test request from: ${req.headers.origin}`);
+    res.json({
+        message: 'CORS is working!',
+        origin: req.headers.origin,
+        timestamp: new Date().toISOString()
     });
 });
 
