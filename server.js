@@ -1291,7 +1291,7 @@ async function expireExpiredWagers() {
                 metadata: supabase.raw(`COALESCE(metadata, '{}'::jsonb) || '{"cancelled_at": "${new Date().toISOString()}", "cancelled_by": "system_expiration"}'::jsonb`)
             })
             .eq('status', 'open')
-            .lt('expires_at', new Date().toISOString());
+            .lt('expiry_time', new Date().toISOString());
 
         if (cryptoError) {
             console.error('❌ Error expiring crypto wagers:', cryptoError);
@@ -1308,7 +1308,7 @@ async function expireExpiredWagers() {
                 metadata: supabase.raw(`COALESCE(metadata, '{}'::jsonb) || '{"cancelled_at": "${new Date().toISOString()}", "cancelled_by": "system_expiration"}'::jsonb`)
             })
             .eq('status', 'open')
-            .lt('expires_at', new Date().toISOString());
+            .lt('expiry_time', new Date().toISOString());
 
         if (sportsError) {
             console.error('❌ Error expiring sports wagers:', sportsError);
