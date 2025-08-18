@@ -1,5 +1,5 @@
 {
-    "name": "wagerfi-bgworker",
+    "name": "wagerfi-background-worker",
     "version": "1.0.0",
     "description": "WagerFi Background Worker for resolving on-chain wagers",
     "main": "server.js",

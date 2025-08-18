@@ -5,10 +5,11 @@ Background worker service for the WagerFi platform that handles on-chain wager r
 ## 🏗️ Architecture
 
 - **Node.js + Express** server
-- **Immediate execution** endpoints (no cron jobs)
+- **Immediate execution** endpoints (no cron jobs, no edge functions)
+- **Direct Supabase integration** for database operations
 - **Solana integration** with WagerFi Token Program
-- **Supabase integration** for database operations
 - **CoinMarketCap API** for crypto price data
+- **Simplified architecture** - everything in one place
 
 ## 🚀 Quick Start
 
@@ -33,6 +34,8 @@ npm start
 - `GET /status` - Current status and authority info
 
 ### Wager Operations
+- `POST /create-wager` - Create new crypto or sports wagers
+- `POST /accept-wager` - Accept existing wagers
 - `POST /resolve-crypto-wager` - Resolve crypto wagers
 - `POST /resolve-sports-wager` - Resolve sports wagers  
 - `POST /cancel-wager` - Cancel wagers and refund creator

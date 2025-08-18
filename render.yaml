@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: wagerfi-bgworker
+    name: wagerfi-background-worker
     env: node
     plan: starter
     buildCommand: npm install
@@ -21,6 +21,8 @@ services:
       - key: WAGERFI_PROGRAM_ID
         value: 8ztw62qUXetzSbCznGnXZ9bLMBiZUF7YMfPffaBXtkkt
       - key: AUTHORITY_PRIVATE_KEY
+        sync: false
+      - key: TREASURY_WALLET_ADDRESS
         sync: false
       - key: COINMARKETCAP_API_KEY
         sync: false
