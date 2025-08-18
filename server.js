@@ -1084,6 +1084,7 @@ app.post('/token-list', async (req, res) => {
         }
 
         console.log(`🪙 Fetching token list (limit: ${limit}, status: ${listingStatus})`);
+        console.log(`🔑 Using API key: ${apiKey.substring(0, 8)}...`);
 
         // Fetch from CoinMarketCap API
         const response = await fetch(
@@ -1097,7 +1098,9 @@ app.post('/token-list', async (req, res) => {
         );
 
         if (!response.ok) {
-            throw new Error(`CoinMarketCap API error: ${response.status}`);
+            const errorText = await response.text();
+            console.error(`❌ CoinMarketCap API error: ${response.status} - ${errorText}`);
+            throw new Error(`CoinMarketCap API error: ${response.status} - ${errorText}`);
         }
 
         const data = await response.json();
