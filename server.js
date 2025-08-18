@@ -324,6 +324,34 @@ app.post('/cancel-wager', async (req, res) => {
 
         // Get wager from database
         const tableName = wager_type === 'crypto' ? 'crypto_wagers' : 'sports_wagers';
+        console.log(`🔍 Looking for wager in table: ${tableName}`);
+        console.log(`🔍 Searching for wager_id: ${wager_id}`);
+
+        // First, let's see what wagers exist with this ID
+        const { data: allWagers, error: allWagersError } = await supabase
+            .from(tableName)
+            .select('*')
+            .eq('wager_id', wager_id);
+
+        if (allWagersError) {
+            console.error(`❌ Error fetching all wagers with ID ${wager_id}:`, allWagersError);
+            return res.status(500).json({ error: 'Database query failed' });
+        }
+
+        console.log(`🔍 Found ${allWagers?.length || 0} wagers with this ID:`, allWagers);
+
+        // Check if any wager exists with this ID, regardless of status
+        if (allWagers && allWagers.length > 0) {
+            console.log(`🔍 Wager details:`, {
+                id: allWagers[0].id,
+                wager_id: allWagers[0].wager_id,
+                status: allWagers[0].status,
+                creator_id: allWagers[0].creator_id,
+                creator_address: allWagers[0].creator_address
+            });
+        }
+
+        // Now try to get the specific wager with 'open' status
         const { data: wager, error: fetchError } = await supabase
             .from(tableName)
             .select('*')
@@ -331,12 +359,35 @@ app.post('/cancel-wager', async (req, res) => {
             .eq('status', 'open')
             .single();
 
-        if (fetchError || !wager) {
+        if (fetchError) {
+            console.error(`❌ Error fetching open wager ${wager_id}:`, fetchError);
+            return res.status(404).json({ error: `Wager not found or not open: ${fetchError.message}` });
+        }
+
+        if (!wager) {
+            console.error(`❌ No open wager found with ID ${wager_id}`);
             return res.status(404).json({ error: 'Wager not found or not open' });
         }
 
         // Check if user has permission to cancel
-        if (wager.creator_address !== cancelling_address) {
+        let hasPermission = false;
+
+        if (wager.creator_address === cancelling_address) {
+            hasPermission = true;
+        } else if (wager.creator_address === null && wager.creator_id) {
+            // Fallback: check if the cancelling address matches the creator's wallet address
+            const { data: creatorUser, error: userError } = await supabase
+                .from('users')
+                .select('wallet_address')
+                .eq('id', wager.creator_id)
+                .single();
+
+            if (!userError && creatorUser && creatorUser.wallet_address === cancelling_address) {
+                hasPermission = true;
+            }
+        }
+
+        if (!hasPermission) {
             return res.status(403).json({ error: 'Only the wager creator can cancel this wager' });
         }
 
