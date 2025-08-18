@@ -1090,6 +1090,364 @@ async function acceptWagerOnChain(wagerId, creatorId, acceptorId, amount) {
     }
 }
 
+// Handle expired crypto wagers - resolve matched ones, refund unmatched ones
+async function handleExpiredCryptoWagers() {
+    try {
+        console.log('🔄 Handling expired crypto wagers...');
+
+        // Get all expired crypto wagers that need processing
+        const { data: expiredWagers, error: fetchError } = await supabase
+            .from('crypto_wagers')
+            .select('*')
+            .eq('status', 'cancelled')
+            .eq('metadata->cancelled_by', 'system_expiration')
+            .is('metadata->expiry_processed', null);
+
+        if (fetchError) {
+            console.error('❌ Error fetching expired crypto wagers:', fetchError);
+            return;
+        }
+
+        if (!expiredWagers || expiredWagers.length === 0) {
+            console.log('✅ No expired crypto wagers to process');
+            return;
+        }
+
+        console.log(`📋 Processing ${expiredWagers.length} expired crypto wagers...`);
+
+        for (const wager of expiredWagers) {
+            try {
+                if (wager.status === 'matched' || wager.acceptor_id) {
+                    // Wager was matched - resolve it
+                    console.log(`🏁 Resolving matched expired wager: ${wager.wager_id}`);
+                    await resolveExpiredMatchedWager(wager);
+                } else {
+                    // Wager was unmatched - refund creator
+                    console.log(`💰 Refunding unmatched expired wager: ${wager.wager_id}`);
+                    await refundUnmatchedExpiredWager(wager);
+                }
+
+                // Mark as processed
+                await markExpiryProcessed(wager.wager_id, 'crypto');
+
+            } catch (error) {
+                console.error(`❌ Error processing expired wager ${wager.wager_id}:`, error);
+            }
+        }
+
+    } catch (error) {
+        console.error('❌ Error in handleExpiredCryptoWagers:', error);
+    }
+}
+
+// Resolve expired matched wager (determine winner and pay out)
+async function resolveExpiredMatchedWager(wager) {
+    try {
+        console.log(`🏁 Resolving expired matched wager: ${wager.wager_id}`);
+
+        // Get current token price
+        const currentPrice = await getCurrentCryptoPrice(wager.token_symbol);
+
+        // Determine winner based on prediction
+        let winnerId = null;
+        let winnerPosition = null;
+
+        if (wager.prediction_type === 'above') {
+            if (currentPrice > wager.target_price) {
+                winnerId = wager.creator_id;
+                winnerPosition = 'creator';
+            } else {
+                winnerId = wager.acceptor_id;
+                winnerPosition = 'acceptor';
+            }
+        } else {
+            if (currentPrice < wager.target_price) {
+                winnerId = wager.creator_id;
+                winnerPosition = 'creator';
+            } else {
+                winnerId = wager.acceptor_id;
+                winnerPosition = 'acceptor';
+            }
+        }
+
+        // Execute on-chain resolution and payout
+        const resolutionResult = await resolveCryptoWagerOnChain(
+            wager.wager_id,
+            winnerPosition,
+            wager.creator_id,
+            wager.acceptor_id,
+            wager.amount
+        );
+
+        if (resolutionResult.success) {
+            // Update database with resolution
+            const { error: updateError } = await supabase
+                .from('crypto_wagers')
+                .update({
+                    status: 'resolved',
+                    winner_id: winnerId,
+                    winner_position: winnerPosition,
+                    resolution_price: currentPrice,
+                    resolution_time: new Date().toISOString(),
+                    on_chain_signature: resolutionResult.signature
+                })
+                .eq('id', wager.id);
+
+            if (updateError) {
+                console.error(`❌ Error updating wager ${wager.wager_id}:`, updateError);
+            } else {
+                // Create notification for winner
+                await createNotification(winnerId, 'wager_resolved',
+                    'Wager Resolved!',
+                    `Your crypto wager on ${wager.token_symbol} has been resolved. You won ${wager.amount} SOL!`);
+
+                // Update user stats
+                await updateUserStats(winnerId);
+
+                console.log(`✅ Resolved expired matched wager ${wager.wager_id} - Winner: ${winnerId}`);
+            }
+        } else {
+            console.error(`❌ Failed to resolve expired matched wager ${wager.wager_id}:`, resolutionResult.error);
+        }
+
+    } catch (error) {
+        console.error(`❌ Error resolving expired matched wager ${wager.wager_id}:`, error);
+    }
+}
+
+// Refund unmatched expired wager
+async function refundUnmatchedExpiredWager(wager) {
+    try {
+        console.log(`💰 Refunding unmatched expired wager: ${wager.wager_id}`);
+
+        // Execute on-chain refund using your authority private key
+        const refundResult = await processWagerRefundOnChain(wager);
+
+        if (refundResult.success) {
+            // Mark the refund as processed
+            const result = await markRefundProcessed(
+                wager.wager_id,
+                'crypto',
+                refundResult.signature
+            );
+
+            if (result.success) {
+                // Create notification for user
+                await createNotification(
+                    wager.creator_id,
+                    'refund_processed',
+                    'Expired Wager Refunded!',
+                    `Your unmatched crypto wager on ${wager.token_symbol} has expired and been refunded. Transaction: ${refundResult.signature}`
+                );
+
+                console.log(`✅ Refunded unmatched expired wager ${wager.wager_id}`);
+            }
+        } else {
+            console.error(`❌ Failed to refund unmatched expired wager ${wager.wager_id}:`, refundResult.error);
+        }
+
+    } catch (error) {
+        console.error(`❌ Error refunding unmatched expired wager ${wager.wager_id}:`, error);
+    }
+}
+
+// Mark expiry as processed
+async function markExpiryProcessed(wagerId, wagerType) {
+    try {
+        const tableName = wagerType === 'crypto' ? 'crypto_wagers' : 'sports_wagers';
+
+        const { error: updateError } = await supabase
+            .from(tableName)
+            .update({
+                metadata: supabase.raw(`COALESCE(metadata, '{}'::jsonb) || '{"expiry_processed": true, "expiry_processed_at": "${new Date().toISOString()}"}'::jsonb`)
+            })
+            .eq('wager_id', wagerId);
+
+        if (updateError) {
+            console.error(`❌ Error marking expiry as processed for ${wagerId}:`, updateError);
+        }
+
+    } catch (error) {
+        console.error(`❌ Error in markExpiryProcessed for ${wagerId}:`, error);
+    }
+}
+
+// Handle expired sports wagers - resolve matched ones, refund unmatched ones
+async function handleExpiredSportsWagers() {
+    try {
+        console.log('🔄 Handling expired sports wagers...');
+
+        // Get all expired sports wagers that need processing
+        const { data: expiredWagers, error: fetchError } = await supabase
+            .from('sports_wagers')
+            .select('*')
+            .eq('status', 'cancelled')
+            .eq('metadata->cancelled_by', 'system_expiration')
+            .is('metadata->expiry_processed', null);
+
+        if (fetchError) {
+            console.error('❌ Error fetching expired sports wagers:', fetchError);
+            return;
+        }
+
+        if (!expiredWagers || expiredWagers.length === 0) {
+            console.log('✅ No expired sports wagers to process');
+            return;
+        }
+
+        console.log(`📋 Processing ${expiredWagers.length} expired sports wagers...`);
+
+        for (const wager of expiredWagers) {
+            try {
+                if (wager.status === 'matched' || wager.acceptor_id) {
+                    // Wager was matched - resolve it
+                    console.log(`🏁 Resolving matched expired sports wager: ${wager.wager_id}`);
+                    await resolveExpiredMatchedSportsWager(wager);
+                } else {
+                    // Wager was unmatched - refund creator
+                    console.log(`💰 Refunding unmatched expired sports wager: ${wager.wager_id}`);
+                    await refundUnmatchedExpiredSportsWager(wager);
+                }
+
+                // Mark as processed
+                await markExpiryProcessed(wager.wager_id, 'sports');
+
+            } catch (error) {
+                console.error(`❌ Error processing expired sports wager ${wager.wager_id}:`, error);
+            }
+        }
+
+    } catch (error) {
+        console.error('❌ Error in handleExpiredSportsWagers:', error);
+    }
+}
+
+// Resolve expired matched sports wager (determine winner and pay out)
+async function resolveExpiredMatchedSportsWager(wager) {
+    try {
+        console.log(`🏁 Resolving expired matched sports wager: ${wager.wager_id}`);
+
+        // Get game result from Sports API
+        const gameResult = await getSportsGameResult(wager.sport, wager.team1, wager.team2);
+
+        // Determine winner based on prediction
+        let winnerId = null;
+        let winnerPosition = null;
+        let isDraw = false;
+
+        if (gameResult === 'draw' || gameResult === 'tie') {
+            isDraw = true;
+        } else if (gameResult === wager.prediction) {
+            winnerId = wager.creator_id;
+            winnerPosition = 'creator';
+        } else {
+            winnerId = wager.acceptor_id;
+            winnerPosition = 'acceptor';
+        }
+
+        let onChainResult;
+        if (isDraw) {
+            // Handle draw - refund both parties
+            onChainResult = await handleSportsDrawOnChain(
+                wager.wager_id,
+                wager.creator_id,
+                wager.acceptor_id,
+                wager.amount
+            );
+        } else {
+            // Handle normal resolution
+            onChainResult = await resolveSportsWagerOnChain(
+                wager.wager_id,
+                winnerPosition,
+                wager.creator_id,
+                wager.acceptor_id,
+                wager.amount
+            );
+        }
+
+        if (onChainResult.success) {
+            // Update database
+            const { error: updateError } = await supabase
+                .from('sports_wagers')
+                .update({
+                    status: 'resolved',
+                    winner_id: winnerId,
+                    winner_position: winnerPosition,
+                    resolution_outcome: gameResult,
+                    resolution_time: new Date().toISOString(),
+                    on_chain_signature: onChainResult.signature
+                })
+                .eq('id', wager.id);
+
+            if (updateError) {
+                console.error(`❌ Error updating sports wager ${wager.wager_id}:`, updateError);
+            } else {
+                // Create notifications
+                if (isDraw) {
+                    await createNotification(wager.creator_id, 'wager_resolved',
+                        'Wager Draw!',
+                        `Your sports wager on ${wager.team1} vs ${wager.team2} ended in a draw. You've been refunded ${wager.amount} SOL.`);
+                    await createNotification(wager.acceptor_id, 'wager_resolved',
+                        'Wager Draw!',
+                        `Your sports wager on ${wager.team1} vs ${wager.team2} ended in a draw. You've been refunded ${wager.amount} SOL.`);
+                } else {
+                    await createNotification(winnerId, 'wager_resolved',
+                        'Wager Resolved!',
+                        `Your sports wager on ${wager.team1} vs ${wager.team2} has been resolved. You won ${wager.amount} SOL!`);
+                }
+
+                // Update user stats
+                if (winnerId) {
+                    await updateUserStats(winnerId);
+                }
+
+                console.log(`✅ Resolved expired matched sports wager ${wager.wager_id} - ${isDraw ? 'Draw' : `Winner: ${winnerId}`}`);
+            }
+        } else {
+            console.error(`❌ Failed to resolve expired matched sports wager ${wager.wager_id}:`, onChainResult.error);
+        }
+
+    } catch (error) {
+        console.error(`❌ Error resolving expired matched sports wager ${wager.wager_id}:`, error);
+    }
+}
+
+// Refund unmatched expired sports wager
+async function refundUnmatchedExpiredSportsWager(wager) {
+    try {
+        console.log(`💰 Refunding unmatched expired sports wager: ${wager.wager_id}`);
+
+        // Execute on-chain refund using your authority private key
+        const refundResult = await processWagerRefundOnChain(wager);
+
+        if (refundResult.success) {
+            // Mark the refund as processed
+            const result = await markRefundProcessed(
+                wager.wager_id,
+                'sports',
+                refundResult.signature
+            );
+
+            if (result.success) {
+                // Create notification for user
+                await createNotification(
+                    wager.creator_id,
+                    'refund_processed',
+                    'Expired Sports Wager Refunded!',
+                    `Your unmatched sports wager on ${wager.team1} vs ${wager.team2} has expired and been refunded. Transaction: ${refundResult.signature}`
+                );
+
+                console.log(`✅ Refunded unmatched expired sports wager ${wager.wager_id}`);
+            }
+        } else {
+            console.error(`❌ Failed to refund unmatched expired sports wager ${wager.wager_id}:`, refundResult.error);
+        }
+
+    } catch (error) {
+        console.error(`❌ Error refunding unmatched expired sports wager ${wager.wager_id}:`, error);
+    }
+}
+
 // Process wager refund on-chain (using authority private key)
 async function processWagerRefundOnChain(wager) {
     try {
@@ -1282,7 +1640,7 @@ async function expireExpiredWagers() {
 
         let totalExpired = 0;
 
-        // Expire crypto wagers
+        // Expire crypto wagers - check if they were matched or unmatched
         const { data: cryptoExpired, error: cryptoError } = await supabase
             .from('crypto_wagers')
             .update({
@@ -1290,7 +1648,7 @@ async function expireExpiredWagers() {
                 updated_at: new Date().toISOString(),
                 metadata: supabase.raw(`COALESCE(metadata, '{}'::jsonb) || '{"cancelled_at": "${new Date().toISOString()}", "cancelled_by": "system_expiration"}'::jsonb`)
             })
-            .eq('status', 'open')
+            .in('status', ['open', 'matched'])
             .lt('expiry_time', new Date().toISOString());
 
         if (cryptoError) {
@@ -1298,6 +1656,9 @@ async function expireExpiredWagers() {
         } else {
             totalExpired += cryptoExpired.length || 0;
         }
+
+        // Handle expired crypto wagers - resolve matched ones, refund unmatched ones
+        await handleExpiredCryptoWagers();
 
         // Expire sports wagers
         const { data: sportsExpired, error: sportsError } = await supabase
@@ -1307,7 +1668,7 @@ async function expireExpiredWagers() {
                 updated_at: new Date().toISOString(),
                 metadata: supabase.raw(`COALESCE(metadata, '{}'::jsonb) || '{"cancelled_at": "${new Date().toISOString()}", "cancelled_by": "system_expiration"}'::jsonb`)
             })
-            .eq('status', 'open')
+            .in('status', ['open', 'matched'])
             .lt('expiry_time', new Date().toISOString());
 
         if (sportsError) {
@@ -1315,6 +1676,9 @@ async function expireExpiredWagers() {
         } else {
             totalExpired += sportsExpired.length || 0;
         }
+
+        // Handle expired sports wagers - resolve matched ones, refund unmatched ones
+        await handleExpiredSportsWagers();
 
         console.log(`✅ Expired ${totalExpired} wagers automatically`);
         return totalExpired;
