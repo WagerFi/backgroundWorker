@@ -1117,6 +1117,49 @@ app.post('/token-list', async (req, res) => {
     }
 });
 
+// Get trending tokens from CoinMarketCap (better for TopCryptoTokensPanel)
+app.post('/trending-tokens', async (req, res) => {
+    try {
+        const { apiKey, limit = 100, timePeriod = '24h' } = req.body;
+
+        if (!apiKey) {
+            return res.status(400).json({ error: 'API key is required' });
+        }
+
+        console.log(`🪙 Fetching trending tokens (limit: ${limit}, period: ${timePeriod})`);
+        console.log(`🔑 Using API key: ${apiKey.substring(0, 8)}...`);
+
+        // Fetch from CoinMarketCap trending API
+        const response = await fetch(
+            `https://pro-api.coinmarketcap.com/v1/cryptocurrency/trending/latest?limit=${limit}&time_period=${timePeriod}`,
+            {
+                headers: {
+                    'X-CMC_PRO_API_KEY': apiKey,
+                    'Accept': 'application/json'
+                }
+            }
+        );
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`❌ CoinMarketCap trending API error: ${response.status} - ${errorText}`);
+            throw new Error(`CoinMarketCap trending API error: ${response.status} - ${errorText}`);
+        }
+
+        const data = await response.json();
+        console.log(`✅ Fetched ${data.data?.length || 0} trending tokens from CoinMarketCap`);
+
+        res.json(data);
+
+    } catch (error) {
+        console.error('❌ Error in trending-tokens endpoint:', error);
+        res.status(500).json({
+            error: 'Failed to fetch trending tokens',
+            details: error.message
+        });
+    }
+});
+
 // Get token info by ID from CoinMarketCap
 app.post('/token-info', async (req, res) => {
     try {
