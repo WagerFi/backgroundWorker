@@ -993,7 +993,15 @@ async function resolveCryptoWagerOnChain(wagerId, winnerPosition, creatorId, acc
                 throw new Error(`Failed to fetch wager data: ${wagerError?.message || 'Wager not found'}`);
             }
 
-            const wagerAccount = new PublicKey(wagerData.wager_id);
+            // Use escrow_pda as the wager account (it's the actual Solana account)
+            console.log(`🔍 Wager data:`, {
+                wager_id: wagerData.wager_id,
+                escrow_pda: wagerData.escrow_pda,
+                creator_address: wagerData.creator_address,
+                acceptor_address: wagerData.acceptor_address
+            });
+
+            const wagerAccount = new PublicKey(wagerData.escrow_pda);
             const escrowAccount = new PublicKey(wagerData.escrow_pda);
             const winnerWallet = winnerPosition === 'creator'
                 ? new PublicKey(wagerData.creator_address)
@@ -1751,7 +1759,7 @@ async function handleExpiredSportsWagers() {
             .from('sports_wagers')
             .select('*')
             .in('status', ['cancelled', 'active'])
-            .lt('expires_at', new Date().toISOString())
+            .lt('expiry_time', new Date().toISOString())
             .is('metadata->expiry_processed', null);
 
         console.log(`🔍 Found ${expiredWagers?.length || 0} expired sports wagers to resolve/refund`);
@@ -2181,9 +2189,9 @@ async function expireExpiredWagers() {
         console.log('🔍 Looking for expired sports wagers with statuses: open, matched, active');
         const { data: sportsWagersToExpire, error: sportsFetchError } = await supabase
             .from('sports_wagers')
-            .select('id, status, expires_at, metadata')
+            .select('id, status, expiry_time, metadata')
             .in('status', ['open', 'matched', 'active'])
-            .lt('expires_at', new Date().toISOString());
+            .lt('expiry_time', new Date().toISOString());
 
         console.log(`🔍 Found ${sportsWagersToExpire?.length || 0} expired sports wagers to process`);
         if (sportsWagersToExpire && sportsWagersToExpire.length > 0) {
