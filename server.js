@@ -1,8 +1,9 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
-import { Connection, PublicKey, Keypair } from '@solana/web3.js';
-import { Program, AnchorProvider, BN } from '@project-serum/anchor';
+import { Connection, PublicKey, Keypair, BN } from '@solana/web3.js';
+import { Program, AnchorProvider } from '@project-serum/anchor';
+import fetch from 'node-fetch';
 
 // Load environment variables
 dotenv.config();
@@ -944,38 +945,90 @@ async function acceptWagerOnChain(wagerId, creatorId, acceptorId, amount) {
 // Get current crypto price from CoinMarketCap API
 async function getCurrentCryptoPrice(symbol) {
     try {
-        // TODO: Implement actual CoinMarketCap API call
-        // const response = await fetch(`https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=${symbol}`, {
-        //     headers: { 'X-CMC_PRO_API_KEY': process.env.COINMARKETCAP_API_KEY }
-        // });
-        // const data = await response.json();
-        // return data.data[symbol].quote.USD.price;
+        if (!process.env.COINMARKETCAP_API_KEY) {
+            throw new Error('COINMARKETCAP_API_KEY not found in environment variables');
+        }
 
-        // Mock prices for now
-        const mockPrices = {
-            'BTC': 45000,
-            'ETH': 3000,
-            'SOL': 100
-        };
-        return mockPrices[symbol] || 100;
+        console.log(`💰 Fetching real-time price for ${symbol} from CoinMarketCap`);
+
+        const response = await fetch(`https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=${symbol}`, {
+            headers: { 'X-CMC_PRO_API_KEY': process.env.COINMARKETCAP_API_KEY }
+        });
+
+        if (!response.ok) {
+            throw new Error(`CoinMarketCap API responded with status: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (data.data && data.data[symbol] && data.data[symbol].quote && data.data[symbol].quote.USD) {
+            const price = data.data[symbol].quote.USD.price;
+            console.log(`✅ ${symbol} price: $${price}`);
+            return price;
+        } else {
+            throw new Error(`No valid price data found for ${symbol}`);
+        }
+
     } catch (error) {
         console.error('❌ Error fetching crypto price:', error);
-        throw new Error(`Failed to fetch price for ${symbol}`);
+        throw new Error(`Failed to fetch price for ${symbol}: ${error.message}`);
     }
 }
 
 // Get sports game result from Sports API
 async function getSportsGameResult(sport, team1, team2) {
     try {
-        // TODO: Implement actual Sports API call
-        // This would integrate with your existing sports API
+        if (!process.env.SPORTS_API_KEY) {
+            throw new Error('SPORTS_API_KEY not found in environment variables');
+        }
 
-        // Mock result for now
-        const results = [team1, team2, 'draw'];
-        return results[Math.floor(Math.random() * results.length)];
+        console.log(`🏈 Fetching real-time result for ${team1} vs ${team2} (${sport})`);
+
+        // Using API-Football implementation (you can adapt for your specific sports API provider)
+        const response = await fetch(`https://v3.football.api-sports.io/fixtures`, {
+            method: 'GET',
+            headers: {
+                'x-rapidapi-host': 'v3.football.api-sports.io',
+                'x-rapidapi-key': process.env.SPORTS_API_KEY
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Sports API responded with status: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        // Search for the specific fixture
+        if (data.response && data.response.length > 0) {
+            // Find the most recent fixture between these teams
+            const fixture = data.response.find(f =>
+                (f.teams.home.name === team1 && f.teams.away.name === team2) ||
+                (f.teams.home.name === team2 && f.teams.away.name === team1)
+            );
+
+            if (fixture && fixture.goals && fixture.goals.home !== null && fixture.goals.away !== null) {
+                let result;
+                if (fixture.goals.home > fixture.goals.away) {
+                    result = fixture.teams.home.name === team1 ? team1 : team2;
+                } else if (fixture.goals.away > fixture.goals.home) {
+                    result = fixture.teams.away.name === team1 ? team1 : team2;
+                } else {
+                    result = 'draw';
+                }
+
+                console.log(`✅ ${team1} vs ${team2}: ${result} (${fixture.goals.home}-${fixture.goals.away})`);
+                return result;
+            } else {
+                throw new Error(`No completed fixture found for ${team1} vs ${team2}`);
+            }
+        } else {
+            throw new Error(`No fixtures found for ${team1} vs ${team2}`);
+        }
+
     } catch (error) {
         console.error('❌ Error fetching sports result:', error);
-        throw new Error(`Failed to fetch result for ${team1} vs ${team2}`);
+        throw new Error(`Failed to fetch result for ${team1} vs ${team2}: ${error.message}`);
     }
 }
 

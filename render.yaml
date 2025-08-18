@@ -3,8 +3,9 @@ services:
     name: wagerfi-background-worker
     env: node
     plan: starter
-    buildCommand: npm install
+    buildCommand: npm ci
     startCommand: npm start
+    nodeVersion: 18
     envVars:
       - key: NODE_ENV
         value: production
@@ -25,4 +26,6 @@ services:
       - key: TREASURY_WALLET_ADDRESS
         sync: false
       - key: COINMARKETCAP_API_KEY
+        sync: false
+      - key: SPORTS_API_KEY
         sync: false
