@@ -22,7 +22,8 @@
         "express": "^4.18.2",
         "dotenv": "^16.3.1",
         "@solana/web3.js": "^1.87.6",
-        "node-fetch": "^3.3.2"
+        "node-fetch": "^3.3.2",
+        "cors": "^2.8.5"
     },
     "devDependencies": {
         "nodemon": "^3.0.2"

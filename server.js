@@ -4,6 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 import { PublicKey, Keypair } from '@solana/web3.js';
 // import { Program, AnchorProvider } from '@project-serum/anchor';
 import fetch from 'node-fetch';
+import cors from 'cors';
 
 // Load environment variables
 dotenv.config();
@@ -41,6 +42,14 @@ const SOLANA_TRANSACTION_FEE = 0.000005; // Approximate Solana transaction fee
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Configure CORS for all routes
+app.use(cors({
+    origin: ['http://localhost:5173', 'http://localhost:3000', 'https://wagerfi.netlify.app', 'https://wagerfi.vercel.app'],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+}));
 
 app.use(express.json());
 
@@ -1098,9 +1107,9 @@ app.post('/token-list', async (req, res) => {
 
     } catch (error) {
         console.error('❌ Error in token-list endpoint:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             error: 'Failed to fetch token list',
-            details: error.message 
+            details: error.message
         });
     }
 });
@@ -1138,9 +1147,9 @@ app.post('/token-info', async (req, res) => {
 
     } catch (error) {
         console.error('❌ Error in token-info endpoint:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             error: 'Failed to fetch token info',
-            details: error.message 
+            details: error.message
         });
     }
 });
