@@ -1115,7 +1115,6 @@ async function handleExpiredCryptoWagers() {
             .from('crypto_wagers')
             .select('*')
             .eq('status', 'cancelled')
-            .eq('metadata->cancelled_by', 'system_expiration')
             .is('metadata->expiry_processed', null);
 
         if (fetchError) {
@@ -1297,7 +1296,6 @@ async function handleExpiredSportsWagers() {
             .from('sports_wagers')
             .select('*')
             .eq('status', 'cancelled')
-            .eq('metadata->cancelled_by', 'system_expiration')
             .is('metadata->expiry_processed', null);
 
         if (fetchError) {
