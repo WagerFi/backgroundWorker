@@ -1119,7 +1119,7 @@ app.post('/token-list', async (req, res) => {
     }
 });
 
-// Search for tokens by symbol using CoinMarketCap V2 Quotes Latest endpoint
+// Search for tokens by name/symbol using CoinMarketCap Map endpoint (for discovery)
 app.post('/search-tokens', async (req, res) => {
     try {
         const { apiKey, query, limit = 20 } = req.body;
@@ -1131,12 +1131,9 @@ app.post('/search-tokens', async (req, res) => {
         console.log(`🔍 Searching for tokens: "${query}" (limit: ${limit})`);
         console.log(`🔑 Using API key: ${apiKey.substring(0, 8)}...`);
 
-        // Clean the query - remove spaces and convert to uppercase for symbol search
-        const cleanQuery = query.trim().toUpperCase().replace(/\s+/g, '');
-
-        // Use V2 Quotes Latest endpoint for better data and real-time prices
-        const response = await fetch(
-            `https://pro-api.coinmarketcap.com/v2/cryptocurrency/quotes/latest?symbol=${encodeURIComponent(cleanQuery)}&convert=USD&aux=num_market_pairs,cmc_rank,date_added,tags,platform,max_supply,circulating_supply,total_supply,is_active,is_fiat&skip_invalid=true`,
+        // Strategy 1: Try Map endpoint for searching/discovery (most flexible)
+        let response = await fetch(
+            `https://pro-api.coinmarketcap.com/v1/cryptocurrency/map?search=${encodeURIComponent(query)}&limit=${limit}`,
             {
                 headers: {
                     'X-CMC_PRO_API_KEY': apiKey,
@@ -1144,6 +1141,73 @@ app.post('/search-tokens', async (req, res) => {
                 }
             }
         );
+
+        let searchData = null;
+        if (response.ok) {
+            searchData = await response.json();
+        }
+
+        // Strategy 2: If no results from Map search, try exact symbol match
+        if (!searchData?.data || searchData.data.length === 0) {
+            console.log(`🔍 No results from Map search, trying exact symbol match...`);
+            const cleanQuery = query.trim().toUpperCase().replace(/\s+/g, '');
+
+            const symbolResponse = await fetch(
+                `https://pro-api.coinmarketcap.com/v2/cryptocurrency/quotes/latest?symbol=${encodeURIComponent(cleanQuery)}&convert=USD&aux=num_market_pairs,cmc_rank,date_added,tags,platform,max_supply,circulating_supply,total_supply,is_active,is_fiat&skip_invalid=true`,
+                {
+                    headers: {
+                        'X-CMC_PRO_API_KEY': apiKey,
+                        'Accept': 'application/json'
+                    }
+                }
+            );
+
+            if (symbolResponse.ok) {
+                const symbolData = await symbolResponse.json();
+                if (symbolData.data && Object.keys(symbolData.data).length > 0) {
+                    const tokensArray = Object.values(symbolData.data);
+                    console.log(`✅ Found ${tokensArray.length} tokens by exact symbol match`);
+
+                    res.json({
+                        data: tokensArray,
+                        status: symbolData.status
+                    });
+                    return;
+                }
+            }
+
+            // Strategy 3: Try common variations (e.g., "chainlink" -> "LINK")
+            console.log(`🔍 Trying common token variations...`);
+            const variations = [
+                query.trim().toLowerCase(),
+                query.trim().toUpperCase(),
+                query.trim().replace(/\s+/g, ''),
+                query.trim().replace(/\s+/g, '').toUpperCase()
+            ];
+
+            for (const variation of variations) {
+                if (variation === cleanQuery) continue; // Skip if already tried
+
+                const variationResponse = await fetch(
+                    `https://pro-api.coinmarketcap.com/v1/cryptocurrency/map?search=${encodeURIComponent(variation)}&limit=${limit}`,
+                    {
+                        headers: {
+                            'X-CMC_PRO_API_KEY': apiKey,
+                            'Accept': 'application/json'
+                        }
+                    }
+                );
+
+                if (variationResponse.ok) {
+                    const variationData = await variationResponse.json();
+                    if (variationData.data && variationData.data.length > 0) {
+                        console.log(`✅ Found ${variationData.data.length} tokens using variation: "${variation}"`);
+                        searchData = variationData;
+                        break;
+                    }
+                }
+            }
+        }
 
         if (!response.ok) {
             const errorText = await response.text();
@@ -1153,21 +1217,63 @@ app.post('/search-tokens', async (req, res) => {
 
         const data = await response.json();
 
-        if (data.data && Object.keys(data.data).length > 0) {
-            // Convert the object format to array format for consistency
-            const tokensArray = Object.values(data.data);
-            console.log(`✅ Found ${tokensArray.length} tokens matching "${query}" with real-time prices`);
+        if (searchData?.data && searchData.data.length > 0) {
+            // Map endpoint returns array directly
+            const tokensArray = searchData.data;
+            console.log(`✅ Found ${tokensArray.length} tokens matching "${query}"`);
 
-            // Return in the same format as other endpoints
-            res.json({
-                data: tokensArray,
-                status: data.status
-            });
+            // Now get real-time price data for each found token using their IDs
+            const tokenIds = tokensArray.map(token => token.id).join(',');
+
+            try {
+                const priceResponse = await fetch(
+                    `https://pro-api.coinmarketcap.com/v2/cryptocurrency/quotes/latest?id=${tokenIds}&convert=USD&aux=num_market_pairs,cmc_rank,date_added,tags,platform,max_supply,circulating_supply,total_supply,is_active,is_fiat&skip_invalid=true`,
+                    {
+                        headers: {
+                            'X-CMC_PRO_API_KEY': apiKey,
+                            'Accept': 'application/json'
+                        }
+                    }
+                );
+
+                if (priceResponse.ok) {
+                    const priceData = await priceResponse.json();
+
+                    // Merge search results with price data
+                    const enrichedTokens = tokensArray.map(token => {
+                        const priceInfo = priceData.data[token.id];
+                        return {
+                            ...token,
+                            quote: priceInfo?.quote || null
+                        };
+                    });
+
+                    console.log(`✅ Enriched ${enrichedTokens.length} tokens with real-time prices`);
+
+                    res.json({
+                        data: enrichedTokens,
+                        status: searchData.status
+                    });
+                } else {
+                    // If price fetch fails, return tokens without prices
+                    console.log(`⚠️ Price fetch failed, returning tokens without price data`);
+                    res.json({
+                        data: tokensArray,
+                        status: searchData.status
+                    });
+                }
+            } catch (priceError) {
+                console.log(`⚠️ Price fetch error, returning tokens without price data:`, priceError.message);
+                res.json({
+                    data: tokensArray,
+                    status: searchData.status
+                });
+            }
         } else {
             console.log(`ℹ️ No tokens found matching "${query}"`);
             res.json({
                 data: [],
-                status: data.status
+                status: searchData?.status || { timestamp: new Date().toISOString(), error_code: 0, error_message: "No results found" }
             });
         }
 
@@ -1270,7 +1376,7 @@ app.listen(PORT, () => {
     console.log(`📊 Status: http://localhost:${PORT}/status`);
     console.log(`🔑 Authority: ${authorityKeypair ? authorityKeypair.publicKey.toString() : 'not_configured'}`);
     console.log(`⚡ Ready for immediate execution - no cron jobs!`);
-    console.log(`🔍 Crypto search endpoints: /search-tokens (V2 Quotes), /token-info, /trending-tokens`);
+    console.log(`🔍 Crypto search endpoints: /search-tokens (Map + V2 Quotes), /token-info, /trending-tokens`);
 });
 
 // Graceful shutdown
