@@ -393,12 +393,19 @@ app.post('/cancel-wager', async (req, res) => {
         }
 
         // Update database status to cancelled
+        const currentMetadata = wager.metadata || {};
+        const updatedMetadata = {
+            ...currentMetadata,
+            cancelled_at: new Date().toISOString(),
+            cancelled_by: cancelling_address
+        };
+
         const { error: updateError } = await supabase
             .from(tableName)
             .update({
                 status: 'cancelled',
                 updated_at: new Date().toISOString(),
-                metadata: supabase.raw(`COALESCE(metadata, '{}'::jsonb) || '{"cancelled_at": "${new Date().toISOString()}", "cancelled_by": "${cancelling_address}"}'::jsonb`)
+                metadata: updatedMetadata
             })
             .eq('id', wager.id);
 
@@ -1626,40 +1633,80 @@ async function expireExpiredWagers() {
         let totalExpired = 0;
 
         // Expire crypto wagers - check if they were matched or unmatched
-        const { data: cryptoExpired, error: cryptoError } = await supabase
+        // First, get the wagers that need to be expired
+        const { data: cryptoWagersToExpire, error: cryptoFetchError } = await supabase
             .from('crypto_wagers')
-            .update({
-                status: 'cancelled',
-                updated_at: new Date().toISOString(),
-                metadata: supabase.raw(`COALESCE(metadata, '{}'::jsonb) || '{"cancelled_at": "${new Date().toISOString()}", "cancelled_by": "system_expiration"}'::jsonb`)
-            })
+            .select('id, metadata')
             .in('status', ['open', 'matched'])
             .lt('expiry_time', new Date().toISOString());
 
-        if (cryptoError) {
-            console.error('❌ Error expiring crypto wagers:', cryptoError);
-        } else {
-            totalExpired += cryptoExpired.length || 0;
+        if (cryptoFetchError) {
+            console.error('❌ Error fetching crypto wagers to expire:', cryptoFetchError);
+        } else if (cryptoWagersToExpire && cryptoWagersToExpire.length > 0) {
+            // Update each wager individually to preserve metadata
+            for (const wager of cryptoWagersToExpire) {
+                const currentMetadata = wager.metadata || {};
+                const updatedMetadata = {
+                    ...currentMetadata,
+                    cancelled_at: new Date().toISOString(),
+                    cancelled_by: 'system_expiration'
+                };
+
+                const { error: updateError } = await supabase
+                    .from('crypto_wagers')
+                    .update({
+                        status: 'cancelled',
+                        updated_at: new Date().toISOString(),
+                        metadata: updatedMetadata
+                    })
+                    .eq('id', wager.id);
+
+                if (updateError) {
+                    console.error(`❌ Error updating crypto wager ${wager.id}:`, updateError);
+                } else {
+                    totalExpired++;
+                }
+            }
         }
 
         // Handle expired crypto wagers - resolve matched ones, refund unmatched ones
         await handleExpiredCryptoWagers();
 
         // Expire sports wagers
-        const { data: sportsExpired, error: sportsError } = await supabase
+        // First, get the wagers that need to be expired
+        const { data: sportsWagersToExpire, error: sportsFetchError } = await supabase
             .from('sports_wagers')
-            .update({
-                status: 'cancelled',
-                updated_at: new Date().toISOString(),
-                metadata: supabase.raw(`COALESCE(metadata, '{}'::jsonb) || '{"cancelled_at": "${new Date().toISOString()}", "cancelled_by": "system_expiration"}'::jsonb`)
-            })
+            .select('id, metadata')
             .in('status', ['open', 'matched'])
             .lt('expiry_time', new Date().toISOString());
 
-        if (sportsError) {
-            console.error('❌ Error expiring sports wagers:', sportsError);
-        } else {
-            totalExpired += sportsExpired.length || 0;
+        if (sportsFetchError) {
+            console.error('❌ Error fetching sports wagers to expire:', sportsFetchError);
+        } else if (sportsWagersToExpire && sportsWagersToExpire.length > 0) {
+            // Update each wager individually to preserve metadata
+            for (const wager of sportsWagersToExpire) {
+                const currentMetadata = wager.metadata || {};
+                const updatedMetadata = {
+                    ...currentMetadata,
+                    cancelled_at: new Date().toISOString(),
+                    cancelled_by: 'system_expiration'
+                };
+
+                const { error: updateError } = await supabase
+                    .from('sports_wagers')
+                    .update({
+                        status: 'cancelled',
+                        updated_at: new Date().toISOString(),
+                        metadata: updatedMetadata
+                    })
+                    .eq('id', wager.id);
+
+                if (updateError) {
+                    console.error(`❌ Error updating sports wager ${wager.id}:`, updateError);
+                } else {
+                    totalExpired++;
+                }
+            }
         }
 
         // Handle expired sports wagers - resolve matched ones, refund unmatched ones
