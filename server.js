@@ -15,6 +15,18 @@ console.log('SUPABASE_URL:', process.env.SUPABASE_URL ? '✅ Set' : '❌ Missing
 console.log('SUPABASE_SERVICE_ROLE_KEY:', process.env.SUPABASE_SERVICE_ROLE_KEY ?
     `✅ Set (${process.env.SUPABASE_SERVICE_ROLE_KEY.substring(0, 20)}...)` : '❌ Missing');
 
+// Check for common issues
+const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+if (key) {
+    console.log('🔍 Key analysis:');
+    console.log('  - Length:', key.length);
+    console.log('  - Starts with eyJ:', key.startsWith('eyJ'));
+    console.log('  - Ends with ==:', key.endsWith('=='));
+    console.log('  - Contains spaces:', key.includes(' '));
+    console.log('  - Contains newlines:', key.includes('\n'));
+    console.log('  - Contains carriage returns:', key.includes('\r'));
+}
+
 const supabase = createClient(
     process.env.SUPABASE_URL,
     process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -2004,8 +2016,15 @@ app.listen(PORT, () => {
     console.log('🔌 Testing Supabase connection...');
     console.log('🔍 Supabase URL:', process.env.SUPABASE_URL);
     console.log('🔍 Service Role Key (first 30 chars):', process.env.SUPABASE_SERVICE_ROLE_KEY?.substring(0, 30));
+    console.log('🔍 Service Role Key length:', process.env.SUPABASE_SERVICE_ROLE_KEY?.length || 0);
+    console.log('🔍 Service Role Key (last 30 chars):', process.env.SUPABASE_SERVICE_ROLE_KEY?.substring(-30));
+    console.log('🔍 Service Role Key contains "eyJ":', process.env.SUPABASE_SERVICE_ROLE_KEY?.includes('eyJ'));
+    console.log('🔍 Service Role Key contains "==":', process.env.SUPABASE_SERVICE_ROLE_KEY?.includes('=='));
     console.log('🔍 Supabase client properties:', Object.keys(supabase));
     console.log('🔍 Supabase client type:', typeof supabase);
+    console.log('🔍 Supabase client URL:', supabase.supabaseUrl);
+    console.log('🔍 Supabase client key length:', supabase.supabaseKey?.length || 0);
+    console.log('🔍 Supabase client key (first 30):', supabase.supabaseKey?.substring(0, 30));
 
     // Test with a simple query first
     console.log('🔍 Testing simple Supabase query...');
