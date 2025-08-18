@@ -1,8 +1,8 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
-import { Connection, PublicKey, Keypair, BN } from '@solana/web3.js';
-import { Program, AnchorProvider } from '@project-serum/anchor';
+import { PublicKey, Keypair } from '@solana/web3.js';
+// import { Program, AnchorProvider } from '@project-serum/anchor';
 import fetch from 'node-fetch';
 
 // Load environment variables
@@ -14,8 +14,8 @@ const supabase = createClient(
     process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// Initialize Solana connection
-const connection = new Connection(process.env.SOLANA_RPC_URL, 'confirmed');
+// Initialize Solana connection (commented out until needed)
+// const connection = new Connection(process.env.SOLANA_RPC_URL, 'confirmed');
 
 // Initialize Anchor program (we'll need to import the IDL)
 const WAGERFI_PROGRAM_ID = new PublicKey(process.env.WAGERFI_PROGRAM_ID);

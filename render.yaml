@@ -5,7 +5,7 @@ services:
     plan: starter
     buildCommand: npm ci
     startCommand: npm start
-    nodeVersion: 18
+    nodeVersion: 24
     envVars:
       - key: NODE_ENV
         value: production
