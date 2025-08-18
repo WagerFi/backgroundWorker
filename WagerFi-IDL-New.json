@@ -1,0 +1,403 @@
+{
+    "version": "0.1.0",
+    "name": "wagerfi_escrow",
+    "instructions": [
+        {
+            "name": "createWager",
+            "accounts": [
+                {
+                    "name": "wager",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "escrow",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "creator",
+                    "isMut": true,
+                    "isSigner": true
+                },
+                {
+                    "name": "systemProgram",
+                    "isMut": false,
+                    "isSigner": false
+                }
+            ],
+            "args": [
+                {
+                    "name": "wagerId",
+                    "type": "string"
+                },
+                {
+                    "name": "amount",
+                    "type": "u64"
+                },
+                {
+                    "name": "expiryTime",
+                    "type": "i64"
+                },
+                {
+                    "name": "metadata",
+                    "type": "string"
+                }
+            ]
+        },
+        {
+            "name": "acceptWager",
+            "accounts": [
+                {
+                    "name": "wager",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "escrow",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "acceptor",
+                    "isMut": true,
+                    "isSigner": true
+                },
+                {
+                    "name": "systemProgram",
+                    "isMut": false,
+                    "isSigner": false
+                }
+            ],
+            "args": []
+        },
+        {
+            "name": "resolveWager",
+            "accounts": [
+                {
+                    "name": "wager",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "escrow",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "winner",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "treasury",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "authority",
+                    "isMut": true,
+                    "isSigner": true
+                }
+            ],
+            "args": [
+                {
+                    "name": "winner",
+                    "type": {
+                        "defined": "WinnerType"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "cancelWager",
+            "accounts": [
+                {
+                    "name": "wager",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "escrow",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "creator",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "authority",
+                    "isMut": true,
+                    "isSigner": true
+                }
+            ],
+            "args": []
+        },
+        {
+            "name": "handleExpiredWager",
+            "accounts": [
+                {
+                    "name": "wager",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "escrow",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "creator",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "authority",
+                    "isMut": true,
+                    "isSigner": true
+                }
+            ],
+            "args": []
+        },
+        {
+            "name": "handleDrawWager",
+            "accounts": [
+                {
+                    "name": "wager",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "escrow",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "creator",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "acceptor",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "authority",
+                    "isMut": true,
+                    "isSigner": true
+                }
+            ],
+            "args": []
+        }
+    ],
+    "accounts": [
+        {
+            "name": "Wager",
+            "type": {
+                "kind": "struct",
+                "fields": [
+                    {
+                        "name": "wagerId",
+                        "type": "string"
+                    },
+                    {
+                        "name": "creator",
+                        "type": "publicKey"
+                    },
+                    {
+                        "name": "acceptor",
+                        "type": {
+                            "option": "publicKey"
+                        }
+                    },
+                    {
+                        "name": "amount",
+                        "type": "u64"
+                    },
+                    {
+                        "name": "status",
+                        "type": {
+                            "defined": "WagerStatus"
+                        }
+                    },
+                    {
+                        "name": "expiryTime",
+                        "type": "i64"
+                    },
+                    {
+                        "name": "createdAt",
+                        "type": "i64"
+                    },
+                    {
+                        "name": "acceptedAt",
+                        "type": {
+                            "option": "i64"
+                        }
+                    },
+                    {
+                        "name": "resolvedAt",
+                        "type": {
+                            "option": "i64"
+                        }
+                    },
+                    {
+                        "name": "winner",
+                        "type": {
+                            "option": {
+                                "defined": "WinnerType"
+                            }
+                        }
+                    },
+                    {
+                        "name": "metadata",
+                        "type": "string"
+                    }
+                ]
+            }
+        }
+    ],
+    "types": [
+        {
+            "name": "WagerStatus",
+            "type": {
+                "kind": "enum",
+                "variants": [
+                    {
+                        "name": "Open"
+                    },
+                    {
+                        "name": "Active"
+                    },
+                    {
+                        "name": "Resolved"
+                    },
+                    {
+                        "name": "Cancelled"
+                    },
+                    {
+                        "name": "Expired"
+                    }
+                ]
+            }
+        },
+        {
+            "name": "WinnerType",
+            "type": {
+                "kind": "enum",
+                "variants": [
+                    {
+                        "name": "Creator"
+                    },
+                    {
+                        "name": "Acceptor"
+                    }
+                ]
+            }
+        }
+    ],
+    "errors": [
+        {
+            "code": 6000,
+            "name": "InvalidAmount",
+            "msg": "Invalid amount"
+        },
+        {
+            "code": 6001,
+            "name": "WagerIdTooLong",
+            "msg": "Wager ID too long"
+        },
+        {
+            "code": 6002,
+            "name": "MetadataTooLong",
+            "msg": "Metadata too long"
+        },
+        {
+            "code": 6003,
+            "name": "InvalidExpiryTime",
+            "msg": "Invalid expiry time"
+        },
+        {
+            "code": 6004,
+            "name": "WagerNotOpen",
+            "msg": "Wager not open"
+        },
+        {
+            "code": 6005,
+            "name": "WagerExpired",
+            "msg": "Wager expired"
+        },
+        {
+            "code": 6006,
+            "name": "CannotAcceptOwnWager",
+            "msg": "Cannot accept own wager"
+        },
+        {
+            "code": 6007,
+            "name": "WagerNotActive",
+            "msg": "Wager not active"
+        },
+        {
+            "code": 6008,
+            "name": "WagerNotAccepted",
+            "msg": "Wager not accepted"
+        },
+        {
+            "code": 6009,
+            "name": "AmountOverflow",
+            "msg": "Amount overflow"
+        },
+        {
+            "code": 6010,
+            "name": "WagerAlreadyAccepted",
+            "msg": "Wager already accepted"
+        },
+        {
+            "code": 6011,
+            "name": "WagerNotExpired",
+            "msg": "Wager not expired"
+        },
+        {
+            "code": 6012,
+            "name": "InvalidWagerStatus",
+            "msg": "Invalid wager status"
+        },
+        {
+            "code": 6013,
+            "name": "Unauthorized",
+            "msg": "Unauthorized"
+        },
+        {
+            "code": 6014,
+            "name": "InvalidWinnerAccount",
+            "msg": "Invalid winner account"
+        },
+        {
+            "code": 6015,
+            "name": "InvalidCreatorAccount",
+            "msg": "Invalid creator account"
+        },
+        {
+            "code": 6016,
+            "name": "InvalidAcceptorAccount",
+            "msg": "Invalid acceptor account"
+        },
+        {
+            "code": 6017,
+            "name": "InsufficientEscrowBalance",
+            "msg": "Insufficient escrow balance"
+        },
+        {
+            "code": 6018,
+            "name": "InsufficientAcceptorBalance",
+            "msg": "Insufficient acceptor balance"
+        },
+        {
+            "code": 6019,
+            "name": "InsufficientCreatorBalance",
+            "msg": "Insufficient creator balance"
+        }
+    ]
+}
