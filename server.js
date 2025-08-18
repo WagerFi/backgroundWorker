@@ -44,6 +44,18 @@ const connection = new Connection(process.env.SOLANA_RPC_URL || 'https://api.dev
 // Initialize Anchor program with real devnet program ID
 const WAGERFI_PROGRAM_ID = new PublicKey('3trZZeVh3j9sx6H8ZYCdsouGnMjcyyGQoLqLE7CzD8sa');
 
+// Authority keypair for executing program instructions
+// This should be loaded from environment or secure storage
+const AUTHORITY_PRIVATE_KEY = process.env.AUTHORITY_PRIVATE_KEY;
+const authorityKeypair = AUTHORITY_PRIVATE_KEY ?
+    Keypair.fromSecretKey(Buffer.from(JSON.parse(AUTHORITY_PRIVATE_KEY))) :
+    null;
+
+if (!authorityKeypair) {
+    console.error('❌ AUTHORITY_PRIVATE_KEY not found. Cannot execute on-chain transactions.');
+    process.exit(1);
+}
+
 // Initialize Anchor provider and program
 const provider = new AnchorProvider(connection, new Wallet(authorityKeypair), {
     commitment: 'confirmed',
@@ -69,20 +81,10 @@ const program = new Program(idl, WAGERFI_PROGRAM_ID, provider);
 console.log('🔗 WagerFi Token Program initialized:', WAGERFI_PROGRAM_ID.toString());
 console.log('🌐 Connected to Solana devnet');
 
-// Authority keypair for executing program instructions
-// This should be loaded from environment or secure storage
-const AUTHORITY_PRIVATE_KEY = process.env.AUTHORITY_PRIVATE_KEY;
-const authorityKeypair = AUTHORITY_PRIVATE_KEY ?
-    Keypair.fromSecretKey(Buffer.from(JSON.parse(AUTHORITY_PRIVATE_KEY))) :
-    null;
-
-if (!authorityKeypair) {
-    console.error('❌ AUTHORITY_PRIVATE_KEY not found. Cannot execute on-chain transactions.');
-    process.exit(1);
-}
-
 // Treasury wallet for platform fees (4% total - 2% from each user)
-const TREASURY_WALLET = new PublicKey(process.env.TREASURY_WALLET_ADDRESS);
+const TREASURY_WALLET = process.env.TREASURY_WALLET_ADDRESS ? 
+    new PublicKey(process.env.TREASURY_WALLET_ADDRESS) : 
+    new PublicKey('11111111111111111111111111111111'); // Fallback to system program if not set
 
 // Platform fee configuration
 const PLATFORM_FEE_PERCENTAGE = 0.04; // 4% total (2% from each user)
