@@ -50,45 +50,19 @@ const provider = new AnchorProvider(connection, new Wallet(authorityKeypair), {
     preflightCommitment: 'confirmed'
 });
 
-// Load the real program IDL (we'll need to copy this file to the background worker)
-// For now, we'll define the basic structure
-const idl = {
-    "version": "0.1.0",
-    "name": "wagerfi_escrow",
-    "instructions": [
-        {
-            "name": "resolveWager",
-            "accounts": [
-                { "name": "wager", "isMut": true, "isSigner": false },
-                { "name": "escrow", "isMut": true, "isSigner": false },
-                { "name": "winner", "isMut": true, "isSigner": false },
-                { "name": "treasury", "isMut": true, "isSigner": false },
-                { "name": "authority", "isMut": true, "isSigner": true }
-            ],
-            "args": [{ "name": "winner", "type": { "defined": "WinnerType" } }]
-        },
-        {
-            "name": "cancelWager",
-            "accounts": [
-                { "name": "wager", "isMut": true, "isSigner": false },
-                { "name": "escrow", "isMut": true, "isSigner": false },
-                { "name": "creator", "isMut": true, "isSigner": false },
-                { "name": "authority", "isMut": true, "isSigner": true }
-            ],
-            "args": []
-        },
-        {
-            "name": "handleExpiredWager",
-            "accounts": [
-                { "name": "wager", "isMut": true, "isSigner": false },
-                { "name": "escrow", "isMut": true, "isSigner": false },
-                { "name": "creator", "isMut": true, "isSigner": false },
-                { "name": "authority", "isMut": true, "isSigner": true }
-            ],
-            "args": []
-        }
-    ]
-};
+// Load the real program IDL from the file
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Read the IDL file
+const idlPath = join(__dirname, 'WagerFi-IDL-New.json');
+const idl = JSON.parse(readFileSync(idlPath, 'utf8'));
+
+console.log('📋 Loaded WagerFi IDL with instructions:', idl.instructions.map(i => i.name));
 
 const program = new Program(idl, WAGERFI_PROGRAM_ID, provider);
 
