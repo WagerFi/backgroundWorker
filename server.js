@@ -19,7 +19,8 @@ const supabase = createClient(
 // const connection = new Connection(process.env.SOLANA_RPC_URL, 'confirmed');
 
 // Initialize Anchor program (we'll need to import the IDL)
-const WAGERFI_PROGRAM_ID = new PublicKey(process.env.WAGERFI_PROGRAM_ID);
+const WAGERFI_PROGRAM_ID = process.env.WAGERFI_PROGRAM_ID ?
+    new PublicKey(process.env.WAGERFI_PROGRAM_ID) : null;
 
 // Authority keypair for executing program instructions
 // This should be loaded from environment or secure storage
@@ -28,13 +29,14 @@ const authorityKeypair = AUTHORITY_PRIVATE_KEY ?
     Keypair.fromSecretKey(Buffer.from(JSON.parse(AUTHORITY_PRIVATE_KEY))) :
     null;
 
+// Don't crash if authority keypair is missing - just log warning
 if (!authorityKeypair) {
-    console.error('❌ AUTHORITY_PRIVATE_KEY not found. Cannot execute on-chain transactions.');
-    process.exit(1);
+    console.warn('⚠️ AUTHORITY_PRIVATE_KEY not found. On-chain transactions will be disabled.');
 }
 
 // Treasury wallet for platform fees (4% total - 2% from each user)
-const TREASURY_WALLET = new PublicKey(process.env.TREASURY_WALLET_ADDRESS);
+const TREASURY_WALLET = process.env.TREASURY_WALLET_ADDRESS ?
+    new PublicKey(process.env.TREASURY_WALLET_ADDRESS) : null;
 
 // Platform fee configuration
 const PLATFORM_FEE_PERCENTAGE = 0.04; // 4% total (2% from each user)
@@ -60,7 +62,7 @@ app.get('/health', (req, res) => {
         timestamp: new Date().toISOString(),
         service: 'wagerfi-background-worker',
         version: '1.0.0',
-        authority: authorityKeypair.publicKey.toString()
+        authority: authorityKeypair ? authorityKeypair.publicKey.toString() : 'not_configured'
     });
 });
 
@@ -69,7 +71,7 @@ app.get('/status', (req, res) => {
     res.json({
         service: 'WagerFi Background Worker',
         environment: process.env.NODE_ENV || 'development',
-        authority: authorityKeypair.publicKey.toString(),
+        authority: authorityKeypair ? authorityKeypair.publicKey.toString() : 'not_configured',
         timestamp: new Date().toISOString()
     });
 });
@@ -1117,7 +1119,7 @@ app.post('/token-list', async (req, res) => {
     }
 });
 
-// Search for tokens by name/symbol from CoinMarketCap
+// Search for tokens by symbol using CoinMarketCap V2 Quotes Latest endpoint
 app.post('/search-tokens', async (req, res) => {
     try {
         const { apiKey, query, limit = 20 } = req.body;
@@ -1129,9 +1131,12 @@ app.post('/search-tokens', async (req, res) => {
         console.log(`🔍 Searching for tokens: "${query}" (limit: ${limit})`);
         console.log(`🔑 Using API key: ${apiKey.substring(0, 8)}...`);
 
-        // Search from CoinMarketCap API
+        // Clean the query - remove spaces and convert to uppercase for symbol search
+        const cleanQuery = query.trim().toUpperCase().replace(/\s+/g, '');
+
+        // Use V2 Quotes Latest endpoint for better data and real-time prices
         const response = await fetch(
-            `https://pro-api.coinmarketcap.com/v1/cryptocurrency/map?search=${encodeURIComponent(query)}&limit=${limit}`,
+            `https://pro-api.coinmarketcap.com/v2/cryptocurrency/quotes/latest?symbol=${encodeURIComponent(cleanQuery)}&convert=USD&aux=num_market_pairs,cmc_rank,date_added,tags,platform,max_supply,circulating_supply,total_supply,is_active,is_fiat&skip_invalid=true`,
             {
                 headers: {
                     'X-CMC_PRO_API_KEY': apiKey,
@@ -1142,14 +1147,29 @@ app.post('/search-tokens', async (req, res) => {
 
         if (!response.ok) {
             const errorText = await response.text();
-            console.error(`❌ CoinMarketCap search API error: ${response.status} - ${errorText}`);
-            throw new Error(`CoinMarketCap search API error: ${response.status} - ${errorText}`);
+            console.error(`❌ CoinMarketCap V2 search API error: ${response.status} - ${errorText}`);
+            throw new Error(`CoinMarketCap V2 search API error: ${response.status} - ${errorText}`);
         }
 
         const data = await response.json();
-        console.log(`✅ Found ${data.data?.length || 0} tokens matching "${query}"`);
 
-        res.json(data);
+        if (data.data && Object.keys(data.data).length > 0) {
+            // Convert the object format to array format for consistency
+            const tokensArray = Object.values(data.data);
+            console.log(`✅ Found ${tokensArray.length} tokens matching "${query}" with real-time prices`);
+
+            // Return in the same format as other endpoints
+            res.json({
+                data: tokensArray,
+                status: data.status
+            });
+        } else {
+            console.log(`ℹ️ No tokens found matching "${query}"`);
+            res.json({
+                data: [],
+                status: data.status
+            });
+        }
 
     } catch (error) {
         console.error('❌ Error in search-tokens endpoint:', error);
@@ -1248,8 +1268,9 @@ app.listen(PORT, () => {
     console.log(`🚀 WagerFi Background Worker running on port ${PORT}`);
     console.log(`📍 Health check: http://localhost:${PORT}/health`);
     console.log(`📊 Status: http://localhost:${PORT}/status`);
-    console.log(`🔑 Authority: ${authorityKeypair.publicKey.toString()}`);
+    console.log(`🔑 Authority: ${authorityKeypair ? authorityKeypair.publicKey.toString() : 'not_configured'}`);
     console.log(`⚡ Ready for immediate execution - no cron jobs!`);
+    console.log(`🔍 Crypto search endpoints: /search-tokens (V2 Quotes), /token-info, /trending-tokens`);
 });
 
 // Graceful shutdown
