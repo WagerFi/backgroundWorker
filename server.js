@@ -855,6 +855,9 @@ app.post('/accept-wager', async (req, res) => {
             return res.status(500).json({ error: 'Failed to update database' });
         }
 
+        // Update stats for both users - both have now wagered the amount
+        await updateWagerAcceptanceStats(wager.creator_id, acceptor_id, wager.amount || wager.sol_amount, wager_type);
+
         // Create notifications
         await createNotification(wager.creator_id, 'wager_accepted',
             'Wager Accepted!',
@@ -1600,28 +1603,39 @@ async function resolveExpiredMatchedWager(wager) {
     try {
         console.log(`🏁 Resolving expired matched wager: ${wager.wager_id}`);
 
-        // Get current token price
-        const currentPrice = await getCurrentCryptoPrice(wager.token_symbol);
+        // Get current token price at expiry
+        const expiryPrice = await getCurrentCryptoPrice(wager.token_symbol);
+
+        // Log price comparison for debugging
+        console.log(`💰 Price comparison for ${wager.token_symbol}:`);
+        console.log(`   Target price: $${wager.target_price}`);
+        console.log(`   Expiry price: $${expiryPrice}`);
+        console.log(`   Prediction type: ${wager.prediction_type}`);
+        console.log(`   Creator position: ${wager.creator_position}`);
 
         // Determine winner based on prediction
         let winnerId = null;
         let winnerPosition = null;
 
         if (wager.prediction_type === 'above') {
-            if (currentPrice > wager.target_price) {
+            if (expiryPrice > wager.target_price) {
                 winnerId = wager.creator_id;
                 winnerPosition = 'creator';
+                console.log(`   ✅ Creator wins: ${expiryPrice} > ${wager.target_price}`);
             } else {
                 winnerId = wager.acceptor_id;
                 winnerPosition = 'acceptor';
+                console.log(`   ✅ Acceptor wins: ${expiryPrice} <= ${wager.target_price}`);
             }
         } else {
-            if (currentPrice < wager.target_price) {
+            if (expiryPrice < wager.target_price) {
                 winnerId = wager.creator_id;
                 winnerPosition = 'creator';
+                console.log(`   ✅ Creator wins: ${expiryPrice} < ${wager.target_price}`);
             } else {
                 winnerId = wager.acceptor_id;
                 winnerPosition = 'acceptor';
+                console.log(`   ✅ Acceptor wins: ${expiryPrice} >= ${wager.target_price}`);
             }
         }
 
@@ -1635,16 +1649,32 @@ async function resolveExpiredMatchedWager(wager) {
         );
 
         if (resolutionResult.success) {
+            // Get winner's wallet address
+            const winnerWalletAddress = winnerPosition === 'creator'
+                ? wager.creator_address
+                : wager.acceptor_address;
+
             // Update database with resolution
             const { error: updateError } = await supabase
                 .from('crypto_wagers')
                 .update({
                     status: 'resolved',
                     winner_id: winnerId,
+                    winner_address: winnerWalletAddress,
                     winner_position: winnerPosition,
-                    resolution_price: currentPrice,
-                    resolution_time: new Date().toISOString(),
-                    on_chain_signature: resolutionResult.signature
+                    resolution_price: expiryPrice,
+                    resolved_at: new Date().toISOString(),
+                    on_chain_signature: resolutionResult.signature,
+                    metadata: {
+                        ...(wager.metadata || {}),
+                        resolution_details: {
+                            target_price: wager.target_price,
+                            expiry_price: expiryPrice,
+                            prediction_type: wager.prediction_type,
+                            creator_position: wager.creator_position,
+                            resolved_at: new Date().toISOString()
+                        }
+                    }
                 })
                 .eq('id', wager.id);
 
@@ -1656,8 +1686,8 @@ async function resolveExpiredMatchedWager(wager) {
                     'Wager Resolved!',
                     `Your crypto wager on ${wager.token_symbol} has been resolved. You won ${wager.amount} SOL!`);
 
-                // Update user stats
-                await updateUserStats(winnerId);
+                // Update stats for both users involved in the wager
+                await updateWagerUserStats(wager, winnerId, winnerPosition, 'crypto');
 
                 console.log(`✅ Resolved expired matched wager ${wager.wager_id} - Winner: ${winnerId}`);
             }
@@ -1848,16 +1878,31 @@ async function resolveExpiredMatchedSportsWager(wager) {
         }
 
         if (onChainResult.success) {
+            // Get winner's wallet address if there's a winner
+            const winnerWalletAddress = winnerId ?
+                (winnerPosition === 'creator' ? wager.creator_address : wager.acceptor_address) :
+                null;
+
             // Update database
             const { error: updateError } = await supabase
                 .from('sports_wagers')
                 .update({
                     status: 'resolved',
                     winner_id: winnerId,
+                    winner_address: winnerWalletAddress,
                     winner_position: winnerPosition,
                     resolution_outcome: gameResult,
-                    resolution_time: new Date().toISOString(),
-                    on_chain_signature: onChainResult.signature
+                    resolved_at: new Date().toISOString(),
+                    on_chain_signature: onChainResult.signature,
+                    metadata: {
+                        ...(wager.metadata || {}),
+                        resolution_details: {
+                            game_result: gameResult,
+                            is_draw: isDraw,
+                            prediction: wager.prediction,
+                            resolved_at: new Date().toISOString()
+                        }
+                    }
                 })
                 .eq('id', wager.id);
 
@@ -1878,9 +1923,13 @@ async function resolveExpiredMatchedSportsWager(wager) {
                         `Your sports wager on ${wager.team1} vs ${wager.team2} has been resolved. You won ${wager.amount} SOL!`);
                 }
 
-                // Update user stats
+                // Update stats for both users involved in the wager
                 if (winnerId) {
-                    await updateUserStats(winnerId);
+                    await updateWagerUserStats(wager, winnerId, winnerPosition, 'sports');
+                } else {
+                    // Handle draw case - both users get refunded, no winner
+                    console.log(`📊 Draw detected - updating stats for both users (refund scenario)`);
+                    await updateWagerUserStats(wager, null, null, 'sports');
                 }
 
                 console.log(`✅ Resolved expired matched sports wager ${wager.wager_id} - ${isDraw ? 'Draw' : `Winner: ${winnerId}`}`);
@@ -2116,7 +2165,175 @@ async function createNotification(userId, type, title, message) {
     }
 }
 
-// Update user stats
+// Update user stats for both users involved in a wager
+async function updateWagerUserStats(wager, winnerId, winnerPosition, wagerType = 'crypto') {
+    try {
+        console.log(`📊 Updating stats for both users in ${wagerType} wager`);
+
+        const creatorId = wager.creator_id;
+        const acceptorId = wager.acceptor_id;
+        const wagerAmount = wager.amount || wager.sol_amount;
+
+        if (!creatorId || !acceptorId) {
+            console.error('❌ Missing creator or acceptor ID for stats update');
+            return;
+        }
+
+        // Determine who won and who lost
+        let isCreatorWinner = false;
+        let creatorWon = false;
+        let acceptorWon = false;
+
+        if (winnerId && winnerPosition) {
+            // Normal win/loss scenario
+            isCreatorWinner = winnerPosition === 'creator';
+            creatorWon = isCreatorWinner;
+            acceptorWon = !isCreatorWinner;
+        } else {
+            // Draw scenario - both users get refunded, no winner
+            creatorWon = false;
+            acceptorWon = false;
+        }
+
+        console.log(`📊 Stats breakdown:`);
+        if (winnerId && winnerPosition) {
+            console.log(`   Creator (${creatorId}): ${creatorWon ? 'WON' : 'LOST'}`);
+            console.log(`   Acceptor (${acceptorId}): ${acceptorWon ? 'WON' : 'LOST'}`);
+        } else {
+            console.log(`   Creator (${creatorId}): DRAW (refunded)`);
+            console.log(`   Acceptor (${acceptorId}): DRAW (refunded)`);
+        }
+        console.log(`   Wager amount: ${wagerAmount} SOL`);
+
+        // Update creator stats
+        await updateSingleUserStats(creatorId, {
+            total_wagered: wagerAmount,
+            total_won: creatorWon ? wagerAmount : 0,
+            total_lost: creatorWon ? 0 : wagerAmount,
+            won: creatorWon,
+            wager_type: wagerType
+        });
+
+        // Update acceptor stats
+        await updateSingleUserStats(acceptorId, {
+            total_wagered: wagerAmount,
+            total_won: acceptorWon ? wagerAmount : 0,
+            total_lost: acceptorWon ? 0 : wagerAmount,
+            won: acceptorWon,
+            wager_type: wagerType
+        });
+
+        console.log(`✅ Stats updated for both users`);
+
+    } catch (error) {
+        console.error('❌ Error updating wager user stats:', error);
+    }
+}
+
+// Update stats for a single user
+async function updateSingleUserStats(userId, stats) {
+    try {
+        // Get current user stats
+        const { data: currentUser, error: fetchError } = await supabase
+            .from('users')
+            .select('total_wagered, total_won, total_lost, win_count, loss_count, streak_count')
+            .eq('id', userId)
+            .single();
+
+        if (fetchError) {
+            console.error(`❌ Error fetching current stats for user ${userId}:`, fetchError);
+            return;
+        }
+
+        // Calculate new stats
+        const newStats = {
+            total_wagered: (currentUser.total_wagered || 0) + stats.total_wagered,
+            total_won: (currentUser.total_won || 0) + stats.total_won,
+            total_lost: (currentUser.total_lost || 0) + stats.total_lost,
+            updated_at: new Date().toISOString()
+        };
+
+        // Only update win/loss counts and streak if this is a win/loss scenario
+        if (stats.won !== null) {
+            newStats.win_count = (currentUser.win_count || 0) + (stats.won ? 1 : 0);
+            newStats.loss_count = (currentUser.loss_count || 0) + (stats.won ? 0 : 1);
+
+            // Calculate win rate
+            const totalWagers = newStats.win_count + newStats.loss_count;
+            newStats.win_rate = totalWagers > 0 ? (newStats.win_count / totalWagers) * 100 : 0;
+
+            // Calculate streak
+            if (stats.won) {
+                // User won - increment streak
+                newStats.streak_count = (currentUser.streak_count || 0) + 1;
+            } else {
+                // User lost - reset streak to 0
+                newStats.streak_count = 0;
+            }
+        } else {
+            // This is just a wager acceptance, preserve existing win/loss stats
+            newStats.win_count = currentUser.win_count || 0;
+            newStats.loss_count = currentUser.loss_count || 0;
+            newStats.win_rate = currentUser.win_rate || 0;
+            newStats.streak_count = currentUser.streak_count || 0;
+        }
+
+        // Update user stats in database
+        const { error: updateError } = await supabase
+            .from('users')
+            .update(newStats)
+            .eq('id', userId);
+
+        if (updateError) {
+            console.error(`❌ Error updating stats for user ${userId}:`, updateError);
+        } else {
+            console.log(`✅ Updated stats for user ${userId}:`, {
+                total_wagered: newStats.total_wagered,
+                total_won: newStats.total_won,
+                total_lost: newStats.total_lost,
+                win_rate: newStats.win_rate.toFixed(2) + '%',
+                streak_count: newStats.streak_count
+            });
+        }
+
+    } catch (error) {
+        console.error(`❌ Error updating single user stats for ${userId}:`, error);
+    }
+}
+
+// Update stats when a wager is accepted (both users have wagered)
+async function updateWagerAcceptanceStats(creatorId, acceptorId, wagerAmount, wagerType) {
+    try {
+        console.log(`📊 Updating acceptance stats for ${wagerType} wager`);
+        console.log(`   Creator (${creatorId}): wagered ${wagerAmount} SOL`);
+        console.log(`   Acceptor (${acceptorId}): wagered ${wagerAmount} SOL`);
+
+        // Update creator stats - increment total_wagered
+        await updateSingleUserStats(creatorId, {
+            total_wagered: wagerAmount,
+            total_won: 0,
+            total_lost: 0,
+            won: null, // Not a win/loss, just a wager
+            wager_type: wagerType
+        });
+
+        // Update acceptor stats - increment total_wagered
+        await updateSingleUserStats(acceptorId, {
+            total_wagered: wagerAmount,
+            total_won: 0,
+            total_lost: 0,
+            won: null, // Not a win/loss, just a wager
+            wager_type: wagerType
+        });
+
+        console.log(`✅ Acceptance stats updated for both users`);
+
+    } catch (error) {
+        console.error('❌ Error updating wager acceptance stats:', error);
+    }
+}
+
+// Legacy function for backward compatibility
 async function updateUserStats(userId) {
     try {
         const { error } = await supabase.rpc('update_user_stats', { user_uuid: userId });
