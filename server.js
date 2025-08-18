@@ -1536,11 +1536,19 @@ async function handleExpiredCryptoWagers() {
         console.log('🔄 Handling expired crypto wagers...');
 
         // Get all expired crypto wagers that need processing
+        // Look for both cancelled and active wagers that have expired
+        console.log('🔍 Looking for expired crypto wagers to resolve/refund with statuses: cancelled, active');
         const { data: expiredWagers, error: fetchError } = await supabase
             .from('crypto_wagers')
             .select('*')
-            .eq('status', 'cancelled')
+            .in('status', ['cancelled', 'active'])
+            .lt('expires_at', new Date().toISOString())
             .is('metadata->expiry_processed', null);
+
+        console.log(`🔍 Found ${expiredWagers?.length || 0} expired crypto wagers to resolve/refund`);
+        if (expiredWagers && expiredWagers.length > 0) {
+            console.log('🔍 Wagers to process:', expiredWagers.map(w => ({ id: w.id, status: w.status, expires_at: w.expires_at, acceptor_id: w.acceptor_id })));
+        }
 
         if (fetchError) {
             console.error('❌ Error fetching expired crypto wagers:', fetchError);
@@ -1737,11 +1745,19 @@ async function handleExpiredSportsWagers() {
         console.log('🔄 Handling expired sports wagers...');
 
         // Get all expired sports wagers that need processing
+        // Look for both cancelled and active wagers that have expired
+        console.log('🔍 Looking for expired sports wagers to resolve/refund with statuses: cancelled, active');
         const { data: expiredWagers, error: fetchError } = await supabase
             .from('sports_wagers')
             .select('*')
-            .eq('status', 'cancelled')
+            .in('status', ['cancelled', 'active'])
+            .lt('expires_at', new Date().toISOString())
             .is('metadata->expiry_processed', null);
+
+        console.log(`🔍 Found ${expiredWagers?.length || 0} expired sports wagers to resolve/refund`);
+        if (expiredWagers && expiredWagers.length > 0) {
+            console.log('🔍 Wagers to process:', expiredWagers.map(w => ({ id: w.id, status: w.status, expires_at: w.expires_at, acceptor_id: w.acceptor_id })));
+        }
 
         if (fetchError) {
             console.error('❌ Error fetching expired sports wagers:', fetchError);
@@ -2115,11 +2131,17 @@ async function expireExpiredWagers() {
 
         // Expire crypto wagers - check if they were matched or unmatched
         // First, get the wagers that need to be expired
+        console.log('🔍 Looking for expired crypto wagers with statuses: open, matched, active');
         const { data: cryptoWagersToExpire, error: cryptoFetchError } = await supabase
             .from('crypto_wagers')
-            .select('id, metadata')
-            .in('status', ['open', 'matched'])
-            .lt('expiry_time', new Date().toISOString());
+            .select('id, status, expires_at, metadata')
+            .in('status', ['open', 'matched', 'active'])
+            .lt('expires_at', new Date().toISOString());
+
+        console.log(`🔍 Found ${cryptoWagersToExpire?.length || 0} expired crypto wagers to process`);
+        if (cryptoWagersToExpire && cryptoWagersToExpire.length > 0) {
+            console.log('🔍 Expired crypto wagers:', cryptoWagersToExpire.map(w => ({ id: w.id, status: w.status, expires_at: w.expires_at })));
+        }
 
         if (cryptoFetchError) {
             console.error('❌ Error fetching crypto wagers to expire:', cryptoFetchError);
@@ -2151,15 +2173,22 @@ async function expireExpiredWagers() {
         }
 
         // Handle expired crypto wagers - resolve matched ones, refund unmatched ones
+        // This will process both matched and active wagers that have expired
         await handleExpiredCryptoWagers();
 
         // Expire sports wagers
         // First, get the wagers that need to be expired
+        console.log('🔍 Looking for expired sports wagers with statuses: open, matched, active');
         const { data: sportsWagersToExpire, error: sportsFetchError } = await supabase
             .from('sports_wagers')
-            .select('id, metadata')
-            .in('status', ['open', 'matched'])
-            .lt('expiry_time', new Date().toISOString());
+            .select('id, status, expires_at, metadata')
+            .in('status', ['open', 'matched', 'active'])
+            .lt('expires_at', new Date().toISOString());
+
+        console.log(`🔍 Found ${sportsWagersToExpire?.length || 0} expired sports wagers to process`);
+        if (sportsWagersToExpire && sportsWagersToExpire.length > 0) {
+            console.log('🔍 Expired sports wagers:', sportsWagersToExpire.map(w => ({ id: w.id, status: w.status, expires_at: w.expires_at })));
+        }
 
         if (sportsFetchError) {
             console.error('❌ Error fetching sports wagers to expire:', sportsFetchError);
@@ -2191,6 +2220,7 @@ async function expireExpiredWagers() {
         }
 
         // Handle expired sports wagers - resolve matched ones, refund unmatched ones
+        // This will process both matched and active wagers that have expired
         await handleExpiredSportsWagers();
 
         console.log(`✅ Expired ${totalExpired} wagers automatically`);
@@ -2562,6 +2592,21 @@ app.listen(PORT, () => {
             console.error('❌ Error in auto-expiration check:', error);
         }
     }, 15000); // 15 seconds = 15000 milliseconds
+
+    // Also run an immediate check for any wagers that might have already expired
+    console.log('🚀 Running immediate expiration check for any already-expired wagers...');
+    (async () => {
+        try {
+            const immediateExpiredCount = await expireExpiredWagers();
+            if (immediateExpiredCount > 0) {
+                console.log(`✅ Immediate check: Found and processed ${immediateExpiredCount} already-expired wagers`);
+            } else {
+                console.log('✅ Immediate check: No already-expired wagers found');
+            }
+        } catch (error) {
+            console.error('❌ Error in immediate expiration check:', error);
+        }
+    })();
 });
 
 // Graceful shutdown
