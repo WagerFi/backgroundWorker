@@ -19,8 +19,7 @@ const supabase = createClient(
 // const connection = new Connection(process.env.SOLANA_RPC_URL, 'confirmed');
 
 // Initialize Anchor program (we'll need to import the IDL)
-const WAGERFI_PROGRAM_ID = process.env.WAGERFI_PROGRAM_ID ?
-    new PublicKey(process.env.WAGERFI_PROGRAM_ID) : null;
+const WAGERFI_PROGRAM_ID = new PublicKey(process.env.WAGERFI_PROGRAM_ID);
 
 // Authority keypair for executing program instructions
 // This should be loaded from environment or secure storage
@@ -29,14 +28,13 @@ const authorityKeypair = AUTHORITY_PRIVATE_KEY ?
     Keypair.fromSecretKey(Buffer.from(JSON.parse(AUTHORITY_PRIVATE_KEY))) :
     null;
 
-// Don't crash if authority keypair is missing - just log warning
 if (!authorityKeypair) {
-    console.warn('⚠️ AUTHORITY_PRIVATE_KEY not found. On-chain transactions will be disabled.');
+    console.error('❌ AUTHORITY_PRIVATE_KEY not found. Cannot execute on-chain transactions.');
+    process.exit(1);
 }
 
 // Treasury wallet for platform fees (4% total - 2% from each user)
-const TREASURY_WALLET = process.env.TREASURY_WALLET_ADDRESS ?
-    new PublicKey(process.env.TREASURY_WALLET_ADDRESS) : null;
+const TREASURY_WALLET = new PublicKey(process.env.TREASURY_WALLET_ADDRESS);
 
 // Platform fee configuration
 const PLATFORM_FEE_PERCENTAGE = 0.04; // 4% total (2% from each user)
@@ -62,7 +60,7 @@ app.get('/health', (req, res) => {
         timestamp: new Date().toISOString(),
         service: 'wagerfi-background-worker',
         version: '1.0.0',
-        authority: authorityKeypair ? authorityKeypair.publicKey.toString() : 'not_configured'
+        authority: authorityKeypair.publicKey.toString()
     });
 });
 
@@ -71,7 +69,7 @@ app.get('/status', (req, res) => {
     res.json({
         service: 'WagerFi Background Worker',
         environment: process.env.NODE_ENV || 'development',
-        authority: authorityKeypair ? authorityKeypair.publicKey.toString() : 'not_configured',
+        authority: authorityKeypair.publicKey.toString(),
         timestamp: new Date().toISOString()
     });
 });
@@ -639,6 +637,147 @@ app.post('/accept-wager', async (req, res) => {
     }
 });
 
+// 7. Cancel Wager (Database Status Update + Background Refund)
+app.post('/cancel-wager', async (req, res) => {
+    try {
+        const { wager_id, wager_type, cancelling_address } = req.body;
+
+        if (!wager_id || !wager_type || !cancelling_address) {
+            return res.status(400).json({ error: 'wager_id, wager_type, and cancelling_address are required' });
+        }
+
+        console.log(`🔄 Cancelling ${wager_type} wager: ${wager_id} by ${cancelling_address}`);
+
+        // Get wager from database
+        const tableName = wager_type === 'crypto' ? 'crypto_wagers' : 'sports_wagers';
+        const { data: wager, error: fetchError } = await supabase
+            .from(tableName)
+            .select('*')
+            .eq('wager_id', wager_id)
+            .eq('status', 'open')
+            .single();
+
+        if (fetchError || !wager) {
+            return res.status(404).json({ error: 'Wager not found or not open' });
+        }
+
+        // Check if user has permission to cancel
+        if (wager.creator_address !== cancelling_address) {
+            return res.status(403).json({ error: 'Only the wager creator can cancel this wager' });
+        }
+
+        // Update database status to cancelled
+        const { error: updateError } = await supabase
+            .from(tableName)
+            .update({
+                status: 'cancelled',
+                updated_at: new Date().toISOString(),
+                metadata: supabase.raw(`COALESCE(metadata, '{}'::jsonb) || '{"cancelled_at": "${new Date().toISOString()}", "cancelled_by": "${cancelling_address}"}'::jsonb`)
+            })
+            .eq('id', wager.id);
+
+        if (updateError) {
+            console.error(`❌ Error updating wager ${wager_id}:`, updateError);
+            return res.status(500).json({ error: 'Failed to update database' });
+        }
+
+        // Create notification for creator
+        await createNotification(wager.creator_id, 'wager_cancelled',
+            'Wager Cancelled!',
+            `Your ${wager_type} wager has been cancelled. Refund will be processed automatically.`);
+
+        console.log(`✅ Cancelled ${wager_type} wager ${wager_id} - Status updated to cancelled`);
+
+        res.json({
+            success: true,
+            wager_id,
+            wager_type,
+            status: 'cancelled',
+            message: 'Wager cancelled successfully. Refund will be processed by background worker.'
+        });
+
+    } catch (error) {
+        console.error('❌ Error cancelling wager:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 8. Process Cancelled Wagers for Refunds (Background Worker Function)
+app.post('/process-cancelled-wagers', async (req, res) => {
+    try {
+        console.log('🔄 Processing cancelled wagers for refunds...');
+
+        // First, expire any wagers that have passed their deadline
+        const expiredCount = await expireExpiredWagers();
+        console.log(`✅ Expired ${expiredCount} wagers automatically`);
+
+        // Get all cancelled wagers that need refunds
+        const cancelledWagers = await getCancelledWagersForRefund();
+        console.log(`📋 Found ${cancelledWagers.length} cancelled wagers needing refunds`);
+
+        if (cancelledWagers.length === 0) {
+            return res.json({
+                success: true,
+                message: 'No cancelled wagers need refunds',
+                expired_count: expiredCount,
+                processed_count: 0
+            });
+        }
+
+        // Process each cancelled wager
+        let processedCount = 0;
+        for (const wager of cancelledWagers) {
+            try {
+                await processWagerRefund(wager);
+                processedCount++;
+            } catch (error) {
+                console.error(`❌ Error processing refund for ${wager.wager_id}:`, error);
+            }
+        }
+
+        console.log(`✅ Processed ${processedCount} wager refunds`);
+
+        res.json({
+            success: true,
+            message: 'Cancelled wagers processed successfully',
+            expired_count: expiredCount,
+            processed_count: processedCount,
+            total_cancelled: cancelledWagers.length
+        });
+
+    } catch (error) {
+        console.error('❌ Error processing cancelled wagers:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// 9. Mark Refund as Processed
+app.post('/mark-refund-processed', async (req, res) => {
+    try {
+        const { wager_id, wager_type, refund_signature } = req.body;
+
+        if (!wager_id || !wager_type || !refund_signature) {
+            return res.status(400).json({ error: 'wager_id, wager_type, and refund_signature are required' });
+        }
+
+        console.log(`🔄 Marking refund as processed for ${wager_type} wager: ${wager_id}`);
+
+        const result = await markRefundProcessed(wager_id, wager_type, refund_signature);
+
+        if (result.success) {
+            console.log(`✅ Refund marked as processed for ${wager_id}`);
+            res.json(result);
+        } else {
+            console.error(`❌ Failed to mark refund as processed for ${wager_id}:`, result.error);
+            res.status(500).json(result);
+        }
+
+    } catch (error) {
+        console.error('❌ Error marking refund as processed:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // ON-CHAIN INTEGRATION FUNCTIONS
 
 // Resolve crypto wager on-chain
@@ -951,6 +1090,65 @@ async function acceptWagerOnChain(wagerId, creatorId, acceptorId, amount) {
     }
 }
 
+// Process wager refund on-chain (using authority private key)
+async function processWagerRefundOnChain(wager) {
+    try {
+        console.log(`🔗 Executing on-chain refund for wager ${wager.wager_id}`);
+
+        // For refunds: NO platform fee, but network fee is paid from refund
+        const refundAmount = wager.amount; // Full amount to refund
+        const networkFee = SOLANA_TRANSACTION_FEE; // Solana transaction fee
+        const actualRefund = refundAmount - networkFee; // User gets amount minus network fee
+
+        console.log(`💰 Refund breakdown for wager ${wager.wager_id}:`);
+        console.log(`   Original amount: ${refundAmount} SOL`);
+        console.log(`   Network fee: ${networkFee} SOL`);
+        console.log(`   User receives: ${actualRefund} SOL`);
+        console.log(`   Escrow PDA: ${wager.escrow_pda}`);
+
+        // TODO: Implement actual Solana escrow withdrawal
+        // This would:
+        // 1. Use your authority private key to access escrow
+        // 2. Withdraw SOL from escrow account
+        // 3. Send SOL back to user's wallet
+        // 4. Pay network fee from escrow
+        // 5. Close escrow account if empty
+
+        // Example implementation:
+        // const escrowAccount = new PublicKey(wager.escrow_pda);
+        // const userWallet = new PublicKey(wager.creator_address);
+        // 
+        // const transaction = await program.methods.withdrawFromEscrow(actualRefund).accounts({
+        //     escrow: escrowAccount,
+        //     user: userWallet,
+        //     authority: authorityKeypair.publicKey,
+        //     systemProgram: SystemProgram.programId
+        // }).rpc();
+
+        // For now, simulate the transaction
+        const mockSignature = `mock_refund_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+        console.log(`   🔐 Simulated escrow withdrawal completed: ${mockSignature}`);
+
+        return {
+            success: true,
+            signature: mockSignature,
+            refundBreakdown: {
+                originalAmount: refundAmount,
+                networkFee: networkFee,
+                actualRefund: actualRefund
+            }
+        };
+
+    } catch (error) {
+        console.error('❌ On-chain refund failed:', error);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+}
+
 // HELPER FUNCTIONS
 
 // Get current crypto price from CoinMarketCap API
@@ -1075,22 +1273,210 @@ async function updateUserStats(userId) {
     }
 }
 
+// BACKGROUND WORKER HELPER FUNCTIONS
+
+// Expire expired wagers automatically
+async function expireExpiredWagers() {
+    try {
+        console.log('🔄 Checking for expired wagers...');
+
+        let totalExpired = 0;
+
+        // Expire crypto wagers
+        const { data: cryptoExpired, error: cryptoError } = await supabase
+            .from('crypto_wagers')
+            .update({
+                status: 'cancelled',
+                updated_at: new Date().toISOString(),
+                metadata: supabase.raw(`COALESCE(metadata, '{}'::jsonb) || '{"cancelled_at": "${new Date().toISOString()}", "cancelled_by": "system_expiration"}'::jsonb`)
+            })
+            .eq('status', 'open')
+            .lt('expires_at', new Date().toISOString());
+
+        if (cryptoError) {
+            console.error('❌ Error expiring crypto wagers:', cryptoError);
+        } else {
+            totalExpired += cryptoExpired.length || 0;
+        }
+
+        // Expire sports wagers
+        const { data: sportsExpired, error: sportsError } = await supabase
+            .from('sports_wagers')
+            .update({
+                status: 'cancelled',
+                updated_at: new Date().toISOString(),
+                metadata: supabase.raw(`COALESCE(metadata, '{}'::jsonb) || '{"cancelled_at": "${new Date().toISOString()}", "cancelled_by": "system_expiration"}'::jsonb`)
+            })
+            .eq('status', 'open')
+            .lt('expires_at', new Date().toISOString());
+
+        if (sportsError) {
+            console.error('❌ Error expiring sports wagers:', sportsError);
+        } else {
+            totalExpired += sportsExpired.length || 0;
+        }
+
+        console.log(`✅ Expired ${totalExpired} wagers automatically`);
+        return totalExpired;
+
+    } catch (error) {
+        console.error('❌ Error in expireExpiredWagers:', error);
+        return 0;
+    }
+}
+
+// Get cancelled wagers that need refunds
+async function getCancelledWagersForRefund() {
+    try {
+        console.log('🔄 Fetching cancelled wagers needing refunds...');
+
+        const cancelledWagers = [];
+
+        // Get crypto wagers that are cancelled and need refunds
+        const { data: cryptoWagers, error: cryptoError } = await supabase
+            .from('crypto_wagers')
+            .select('wager_id, creator_address, amount, escrow_pda')
+            .eq('status', 'cancelled')
+            .is('metadata->refund_processed', null)
+            .not('escrow_pda', 'is', null);
+
+        if (cryptoError) {
+            console.error('❌ Error fetching cancelled crypto wagers:', cryptoError);
+        } else if (cryptoWagers) {
+            cryptoWagers.forEach(wager => {
+                cancelledWagers.push({
+                    ...wager,
+                    wager_type: 'crypto'
+                });
+            });
+        }
+
+        // Get sports wagers that are cancelled and need refunds
+        const { data: sportsWagers, error: sportsError } = await supabase
+            .from('sports_wagers')
+            .select('wager_id, creator_address, amount, escrow_pda')
+            .eq('status', 'cancelled')
+            .is('metadata->refund_processed', null)
+            .not('escrow_pda', 'is', null);
+
+        if (sportsError) {
+            console.error('❌ Error fetching cancelled sports wagers:', sportsError);
+        } else if (sportsWagers) {
+            sportsWagers.forEach(wager => {
+                cancelledWagers.push({
+                    ...wager,
+                    wager_type: 'sports'
+                });
+            });
+        }
+
+        console.log(`📋 Found ${cancelledWagers.length} cancelled wagers needing refunds`);
+        return cancelledWagers;
+
+    } catch (error) {
+        console.error('❌ Error in getCancelledWagersForRefund:', error);
+        return [];
+    }
+}
+
+// Process refund for a single wager
+async function processWagerRefund(wager) {
+    try {
+        console.log(`💰 Processing refund for wager ${wager.wager_id} (${wager.wager_type})`);
+        console.log(`   Creator: ${wager.creator_address}`);
+        console.log(`   Amount: ${wager.amount} SOL`);
+        console.log(`   Escrow PDA: ${wager.escrow_pda}`);
+
+        // Execute on-chain refund using your authority private key
+        const refundResult = await processWagerRefundOnChain(wager);
+
+        if (refundResult.success) {
+            // Mark the refund as processed in the database
+            const result = await markRefundProcessed(
+                wager.wager_id,
+                wager.wager_type,
+                refundResult.signature
+            );
+
+            if (result.success) {
+                console.log(`✅ Refund processed successfully for ${wager.wager_id}`);
+                console.log(`   Transaction: ${refundResult.signature}`);
+
+                // Create notification for user
+                await createNotification(
+                    wager.creator_id || 'unknown',
+                    'refund_processed',
+                    'Refund Processed!',
+                    `Your ${wager.wager_type} wager refund of ${wager.amount} SOL has been processed. Transaction: ${refundResult.signature}`
+                );
+            } else {
+                console.error(`❌ Error marking refund as processed for ${wager.wager_id}:`, result.error);
+            }
+        } else {
+            console.error(`❌ On-chain refund failed for ${wager.wager_id}:`, refundResult.error);
+        }
+
+    } catch (error) {
+        console.error(`❌ Error processing refund for ${wager.wager_id}:`, error);
+        throw error;
+    }
+}
+
+// Mark refund as processed in database
+async function markRefundProcessed(wagerId, wagerType, refundSignature) {
+    try {
+        console.log(`🔄 Marking refund as processed for ${wagerType} wager: ${wagerId}`);
+
+        const tableName = wagerType === 'crypto' ? 'crypto_wagers' : 'sports_wagers';
+
+        const { error: updateError } = await supabase
+            .from(tableName)
+            .update({
+                metadata: supabase.raw(`COALESCE(metadata, '{}'::jsonb) || '{"refund_processed": true, "refund_signature": "${refundSignature}", "refund_processed_at": "${new Date().toISOString()}"}'::jsonb`)
+            })
+            .eq('wager_id', wagerId);
+
+        if (updateError) {
+            console.error(`❌ Error updating refund status for ${wagerId}:`, updateError);
+            return {
+                success: false,
+                error: updateError.message
+            };
+        }
+
+        console.log(`✅ Refund marked as processed for ${wagerId}`);
+        return {
+            success: true,
+            message: 'Refund marked as processed',
+            wager_id: wagerId,
+            refund_signature: refundSignature
+        };
+
+    } catch (error) {
+        console.error(`❌ Error in markRefundProcessed for ${wagerId}:`, error);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+}
+
 // CRYPTO TOKEN ENDPOINTS
 // Get token list from CoinMarketCap
 app.post('/token-list', async (req, res) => {
     try {
-        const { apiKey, limit = 100, listingStatus = 'active' } = req.body;
+        const { apiKey, limit = 100 } = req.body;
 
         if (!apiKey) {
             return res.status(400).json({ error: 'API key is required' });
         }
 
-        console.log(`🪙 Fetching token list (limit: ${limit}, status: ${listingStatus})`);
+        console.log(`🪙 Fetching token list (limit: ${limit})`);
         console.log(`🔑 Using API key: ${apiKey.substring(0, 8)}...`);
 
         // Fetch from CoinMarketCap API
         const response = await fetch(
-            `https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest?limit=${limit}&listing_status=${listingStatus}`,
+            `https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest?limit=${limit}`,
             {
                 headers: {
                     'X-CMC_PRO_API_KEY': apiKey,
@@ -1114,173 +1500,6 @@ app.post('/token-list', async (req, res) => {
         console.error('❌ Error in token-list endpoint:', error);
         res.status(500).json({
             error: 'Failed to fetch token list',
-            details: error.message
-        });
-    }
-});
-
-// Search for tokens by name/symbol using CoinMarketCap Map endpoint (for discovery)
-app.post('/search-tokens', async (req, res) => {
-    try {
-        const { apiKey, query, limit = 20 } = req.body;
-
-        if (!apiKey || !query) {
-            return res.status(400).json({ error: 'API key and search query are required' });
-        }
-
-        console.log(`🔍 Searching for tokens: "${query}" (limit: ${limit})`);
-        console.log(`🔑 Using API key: ${apiKey.substring(0, 8)}...`);
-
-        // Strategy 1: Try Map endpoint for searching/discovery (most flexible)
-        let response = await fetch(
-            `https://pro-api.coinmarketcap.com/v1/cryptocurrency/map?search=${encodeURIComponent(query)}&limit=${limit}`,
-            {
-                headers: {
-                    'X-CMC_PRO_API_KEY': apiKey,
-                    'Accept': 'application/json'
-                }
-            }
-        );
-
-        let searchData = null;
-        if (response.ok) {
-            searchData = await response.json();
-        }
-
-        // Strategy 2: If no results from Map search, try exact symbol match
-        if (!searchData?.data || searchData.data.length === 0) {
-            console.log(`🔍 No results from Map search, trying exact symbol match...`);
-            const cleanQuery = query.trim().toUpperCase().replace(/\s+/g, '');
-
-            const symbolResponse = await fetch(
-                `https://pro-api.coinmarketcap.com/v2/cryptocurrency/quotes/latest?symbol=${encodeURIComponent(cleanQuery)}&convert=USD&aux=num_market_pairs,cmc_rank,date_added,tags,platform,max_supply,circulating_supply,total_supply,is_active,is_fiat&skip_invalid=true`,
-                {
-                    headers: {
-                        'X-CMC_PRO_API_KEY': apiKey,
-                        'Accept': 'application/json'
-                    }
-                }
-            );
-
-            if (symbolResponse.ok) {
-                const symbolData = await symbolResponse.json();
-                if (symbolData.data && Object.keys(symbolData.data).length > 0) {
-                    const tokensArray = Object.values(symbolData.data);
-                    console.log(`✅ Found ${tokensArray.length} tokens by exact symbol match`);
-
-                    res.json({
-                        data: tokensArray,
-                        status: symbolData.status
-                    });
-                    return;
-                }
-            }
-
-            // Strategy 3: Try common variations (e.g., "chainlink" -> "LINK")
-            console.log(`🔍 Trying common token variations...`);
-            const variations = [
-                query.trim().toLowerCase(),
-                query.trim().toUpperCase(),
-                query.trim().replace(/\s+/g, ''),
-                query.trim().replace(/\s+/g, '').toUpperCase()
-            ];
-
-            for (const variation of variations) {
-                if (variation === cleanQuery) continue; // Skip if already tried
-
-                const variationResponse = await fetch(
-                    `https://pro-api.coinmarketcap.com/v1/cryptocurrency/map?search=${encodeURIComponent(variation)}&limit=${limit}`,
-                    {
-                        headers: {
-                            'X-CMC_PRO_API_KEY': apiKey,
-                            'Accept': 'application/json'
-                        }
-                    }
-                );
-
-                if (variationResponse.ok) {
-                    const variationData = await variationResponse.json();
-                    if (variationData.data && variationData.data.length > 0) {
-                        console.log(`✅ Found ${variationData.data.length} tokens using variation: "${variation}"`);
-                        searchData = variationData;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error(`❌ CoinMarketCap V2 search API error: ${response.status} - ${errorText}`);
-            throw new Error(`CoinMarketCap V2 search API error: ${response.status} - ${errorText}`);
-        }
-
-        const data = await response.json();
-
-        if (searchData?.data && searchData.data.length > 0) {
-            // Map endpoint returns array directly
-            const tokensArray = searchData.data;
-            console.log(`✅ Found ${tokensArray.length} tokens matching "${query}"`);
-
-            // Now get real-time price data for each found token using their IDs
-            const tokenIds = tokensArray.map(token => token.id).join(',');
-
-            try {
-                const priceResponse = await fetch(
-                    `https://pro-api.coinmarketcap.com/v2/cryptocurrency/quotes/latest?id=${tokenIds}&convert=USD&aux=num_market_pairs,cmc_rank,date_added,tags,platform,max_supply,circulating_supply,total_supply,is_active,is_fiat&skip_invalid=true`,
-                    {
-                        headers: {
-                            'X-CMC_PRO_API_KEY': apiKey,
-                            'Accept': 'application/json'
-                        }
-                    }
-                );
-
-                if (priceResponse.ok) {
-                    const priceData = await priceResponse.json();
-
-                    // Merge search results with price data
-                    const enrichedTokens = tokensArray.map(token => {
-                        const priceInfo = priceData.data[token.id];
-                        return {
-                            ...token,
-                            quote: priceInfo?.quote || null
-                        };
-                    });
-
-                    console.log(`✅ Enriched ${enrichedTokens.length} tokens with real-time prices`);
-
-                    res.json({
-                        data: enrichedTokens,
-                        status: searchData.status
-                    });
-                } else {
-                    // If price fetch fails, return tokens without prices
-                    console.log(`⚠️ Price fetch failed, returning tokens without price data`);
-                    res.json({
-                        data: tokensArray,
-                        status: searchData.status
-                    });
-                }
-            } catch (priceError) {
-                console.log(`⚠️ Price fetch error, returning tokens without price data:`, priceError.message);
-                res.json({
-                    data: tokensArray,
-                    status: searchData.status
-                });
-            }
-        } else {
-            console.log(`ℹ️ No tokens found matching "${query}"`);
-            res.json({
-                data: [],
-                status: searchData?.status || { timestamp: new Date().toISOString(), error_code: 0, error_message: "No results found" }
-            });
-        }
-
-    } catch (error) {
-        console.error('❌ Error in search-tokens endpoint:', error);
-        res.status(500).json({
-            error: 'Failed to search tokens',
             details: error.message
         });
     }
@@ -1374,9 +1593,8 @@ app.listen(PORT, () => {
     console.log(`🚀 WagerFi Background Worker running on port ${PORT}`);
     console.log(`📍 Health check: http://localhost:${PORT}/health`);
     console.log(`📊 Status: http://localhost:${PORT}/status`);
-    console.log(`🔑 Authority: ${authorityKeypair ? authorityKeypair.publicKey.toString() : 'not_configured'}`);
+    console.log(`🔑 Authority: ${authorityKeypair.publicKey.toString()}`);
     console.log(`⚡ Ready for immediate execution - no cron jobs!`);
-    console.log(`🔍 Crypto search endpoints: /search-tokens (Map + V2 Quotes), /token-info, /trending-tokens`);
 });
 
 // Graceful shutdown
