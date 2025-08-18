@@ -2002,16 +2002,46 @@ app.listen(PORT, () => {
 
     // Test Supabase connection
     console.log('🔌 Testing Supabase connection...');
-    supabase.from('crypto_wagers').select('count', { count: 'exact', head: true })
-        .then(({ count, error }) => {
+    console.log('🔍 Supabase URL:', process.env.SUPABASE_URL);
+    console.log('🔍 Service Role Key (first 30 chars):', process.env.SUPABASE_SERVICE_ROLE_KEY?.substring(0, 30));
+    console.log('🔍 Supabase client properties:', Object.keys(supabase));
+    console.log('🔍 Supabase client type:', typeof supabase);
+
+    // Test with a simple query first
+    console.log('🔍 Testing simple Supabase query...');
+    supabase.from('crypto_wagers').select('*').limit(1)
+        .then(({ data, error }) => {
+            console.log('🔍 Simple query response:', {
+                hasData: !!data,
+                dataLength: data?.length || 0,
+                hasError: !!error,
+                error: error
+            });
+
             if (error) {
-                console.error('❌ Supabase connection failed:', error);
+                console.error('❌ Simple query failed:', error);
+                console.error('❌ Error details:', JSON.stringify(error, null, 2));
             } else {
-                console.log(`✅ Supabase connection successful! Found ${count} crypto wagers`);
+                console.log('✅ Simple query successful!');
+
+                // Now try the count query
+                console.log('🔍 Testing count query...');
+                return supabase.from('crypto_wagers').select('count', { count: 'exact', head: true });
+            }
+        })
+        .then(({ count, error, data }) => {
+            if (count !== undefined) {
+                console.log('🔍 Count query response:', { count, error, data });
+                if (error) {
+                    console.error('❌ Count query failed:', error);
+                } else {
+                    console.log(`✅ Supabase connection successful! Found ${count} crypto wagers`);
+                }
             }
         })
         .catch(err => {
             console.error('❌ Supabase connection test failed:', err);
+            console.error('❌ Error stack:', err.stack);
         });
 
     // Start auto-expiration check every 15 seconds
