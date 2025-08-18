@@ -155,11 +155,26 @@ const PORT = process.env.PORT || 3001;
 
 // Configure CORS for all routes
 app.use(cors({
-    origin: ['http://localhost:5173', 'http://localhost:3000', 'https://wagerfi.netlify.app', 'https://wagerfi.vercel.app'],
+    origin: ['http://localhost:5173', 'http://localhost:3000', 'https://wagerfi.netlify.app', 'https://wagerfi.vercel.app', 'https://wagerfi.gg'],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Origin', 'Accept'],
+    optionsSuccessStatus: 200
 }));
+
+// Additional CORS headers for preflight requests
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', req.headers.origin);
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    res.header('Access-Control-Allow-Credentials', 'true');
+
+    if (req.method === 'OPTIONS') {
+        res.sendStatus(200);
+    } else {
+        next();
+    }
+});
 
 app.use(express.json());
 
