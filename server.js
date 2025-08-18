@@ -12,8 +12,11 @@ dotenv.config();
 // Initialize Supabase client
 console.log('🔑 Environment variables check:');
 console.log('SUPABASE_URL:', process.env.SUPABASE_URL ? '✅ Set' : '❌ Missing');
-console.log('SUPABASE_SERVICE_ROLE_KEY:', process.env.SUPABASE_SERVICE_ROLE_KEY ?
+console.log('SUPABASE_SERVICE_ROLE_KEY:', process.env.SUPABASE_SERVICE_ROLE_KEY ? 
     `✅ Set (${process.env.SUPABASE_SERVICE_ROLE_KEY.substring(0, 20)}...)` : '❌ Missing');
+
+// TEMPORARY: Hardcoded service role key due to environment variable issues
+console.log('🔑 Using hardcoded service role key for now');
 
 // Check for common issues
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -29,7 +32,7 @@ if (key) {
 
 const supabase = createClient(
     process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFqcWhuYnpmZ2lobHhramphd2RrIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NTUwNTE5NSwiZXhwIjoyMDcxMDgxMTk1fQ.BjU9hCXmk95mMzMzeGo0yCs0uU2enEfVX_nKswypIaQ'
 );
 
 // Test Supabase connection
