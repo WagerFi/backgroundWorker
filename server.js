@@ -82,8 +82,8 @@ console.log('🔗 WagerFi Token Program initialized:', WAGERFI_PROGRAM_ID.toStri
 console.log('🌐 Connected to Solana devnet');
 
 // Treasury wallet for platform fees (4% total - 2% from each user)
-const TREASURY_WALLET = process.env.TREASURY_WALLET_ADDRESS ? 
-    new PublicKey(process.env.TREASURY_WALLET_ADDRESS) : 
+const TREASURY_WALLET = process.env.TREASURY_WALLET_ADDRESS ?
+    new PublicKey(process.env.TREASURY_WALLET_ADDRESS) :
     new PublicKey('11111111111111111111111111111111'); // Fallback to system program if not set
 
 // Platform fee configuration
