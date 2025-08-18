@@ -311,16 +311,16 @@ app.post('/resolve-sports-wager', async (req, res) => {
     }
 });
 
-// 3. Cancel Wager (refund creator)
+// 3. Cancel Wager (Database Status Update + Background Refund)
 app.post('/cancel-wager', async (req, res) => {
     try {
-        const { wager_id, wager_type } = req.body;
+        const { wager_id, wager_type, cancelling_address } = req.body;
 
-        if (!wager_id || !wager_type) {
-            return res.status(400).json({ error: 'wager_id and wager_type are required' });
+        if (!wager_id || !wager_type || !cancelling_address) {
+            return res.status(400).json({ error: 'wager_id, wager_type, and cancelling_address are required' });
         }
 
-        console.log(`🔄 Cancelling ${wager_type} wager: ${wager_id}`);
+        console.log(`🔄 Cancelling ${wager_type} wager: ${wager_id} by ${cancelling_address}`);
 
         // Get wager from database
         const tableName = wager_type === 'crypto' ? 'crypto_wagers' : 'sports_wagers';
@@ -335,23 +335,18 @@ app.post('/cancel-wager', async (req, res) => {
             return res.status(404).json({ error: 'Wager not found or not open' });
         }
 
-        // Execute on-chain cancellation and refund
-        const cancellationResult = await cancelWagerOnChain(
-            wager_id,
-            wager.creator_id,
-            wager.amount
-        );
-
-        if (!cancellationResult.success) {
-            return res.status(500).json({ error: cancellationResult.error });
+        // Check if user has permission to cancel
+        if (wager.creator_address !== cancelling_address) {
+            return res.status(403).json({ error: 'Only the wager creator can cancel this wager' });
         }
 
-        // Update database
+        // Update database status to cancelled
         const { error: updateError } = await supabase
             .from(tableName)
             .update({
                 status: 'cancelled',
-                on_chain_signature: cancellationResult.signature
+                updated_at: new Date().toISOString(),
+                metadata: supabase.raw(`COALESCE(metadata, '{}'::jsonb) || '{"cancelled_at": "${new Date().toISOString()}", "cancelled_by": "${cancelling_address}"}'::jsonb`)
             })
             .eq('id', wager.id);
 
@@ -363,15 +358,16 @@ app.post('/cancel-wager', async (req, res) => {
         // Create notification for creator
         await createNotification(wager.creator_id, 'wager_cancelled',
             'Wager Cancelled!',
-            `Your ${wager_type} wager has been cancelled and you've been refunded ${wager.amount} SOL.`);
+            `Your ${wager_type} wager has been cancelled. Refund will be processed automatically.`);
 
-        console.log(`✅ Cancelled ${wager_type} wager ${wager_id}`);
+        console.log(`✅ Cancelled ${wager_type} wager ${wager_id} - Status updated to cancelled`);
 
         res.json({
             success: true,
             wager_id,
             wager_type,
-            on_chain_signature: cancellationResult.signature
+            status: 'cancelled',
+            message: 'Wager cancelled successfully. Refund will be processed by background worker.'
         });
 
     } catch (error) {
@@ -637,70 +633,7 @@ app.post('/accept-wager', async (req, res) => {
     }
 });
 
-// 7. Cancel Wager (Database Status Update + Background Refund)
-app.post('/cancel-wager', async (req, res) => {
-    try {
-        const { wager_id, wager_type, cancelling_address } = req.body;
 
-        if (!wager_id || !wager_type || !cancelling_address) {
-            return res.status(400).json({ error: 'wager_id, wager_type, and cancelling_address are required' });
-        }
-
-        console.log(`🔄 Cancelling ${wager_type} wager: ${wager_id} by ${cancelling_address}`);
-
-        // Get wager from database
-        const tableName = wager_type === 'crypto' ? 'crypto_wagers' : 'sports_wagers';
-        const { data: wager, error: fetchError } = await supabase
-            .from(tableName)
-            .select('*')
-            .eq('wager_id', wager_id)
-            .eq('status', 'open')
-            .single();
-
-        if (fetchError || !wager) {
-            return res.status(404).json({ error: 'Wager not found or not open' });
-        }
-
-        // Check if user has permission to cancel
-        if (wager.creator_address !== cancelling_address) {
-            return res.status(403).json({ error: 'Only the wager creator can cancel this wager' });
-        }
-
-        // Update database status to cancelled
-        const { error: updateError } = await supabase
-            .from(tableName)
-            .update({
-                status: 'cancelled',
-                updated_at: new Date().toISOString(),
-                metadata: supabase.raw(`COALESCE(metadata, '{}'::jsonb) || '{"cancelled_at": "${new Date().toISOString()}", "cancelled_by": "${cancelling_address}"}'::jsonb`)
-            })
-            .eq('id', wager.id);
-
-        if (updateError) {
-            console.error(`❌ Error updating wager ${wager_id}:`, updateError);
-            return res.status(500).json({ error: 'Failed to update database' });
-        }
-
-        // Create notification for creator
-        await createNotification(wager.creator_id, 'wager_cancelled',
-            'Wager Cancelled!',
-            `Your ${wager_type} wager has been cancelled. Refund will be processed automatically.`);
-
-        console.log(`✅ Cancelled ${wager_type} wager ${wager_id} - Status updated to cancelled`);
-
-        res.json({
-            success: true,
-            wager_id,
-            wager_type,
-            status: 'cancelled',
-            message: 'Wager cancelled successfully. Refund will be processed by background worker.'
-        });
-
-    } catch (error) {
-        console.error('❌ Error cancelling wager:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
 
 // 8. Process Cancelled Wagers for Refunds (Background Worker Function)
 app.post('/process-cancelled-wagers', async (req, res) => {
