@@ -1117,6 +1117,49 @@ app.post('/token-list', async (req, res) => {
     }
 });
 
+// Search for tokens by name/symbol from CoinMarketCap
+app.post('/search-tokens', async (req, res) => {
+    try {
+        const { apiKey, query, limit = 20 } = req.body;
+
+        if (!apiKey || !query) {
+            return res.status(400).json({ error: 'API key and search query are required' });
+        }
+
+        console.log(`🔍 Searching for tokens: "${query}" (limit: ${limit})`);
+        console.log(`🔑 Using API key: ${apiKey.substring(0, 8)}...`);
+
+        // Search from CoinMarketCap API
+        const response = await fetch(
+            `https://pro-api.coinmarketcap.com/v1/cryptocurrency/map?search=${encodeURIComponent(query)}&limit=${limit}`,
+            {
+                headers: {
+                    'X-CMC_PRO_API_KEY': apiKey,
+                    'Accept': 'application/json'
+                }
+            }
+        );
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`❌ CoinMarketCap search API error: ${response.status} - ${errorText}`);
+            throw new Error(`CoinMarketCap search API error: ${response.status} - ${errorText}`);
+        }
+
+        const data = await response.json();
+        console.log(`✅ Found ${data.data?.length || 0} tokens matching "${query}"`);
+
+        res.json(data);
+
+    } catch (error) {
+        console.error('❌ Error in search-tokens endpoint:', error);
+        res.status(500).json({
+            error: 'Failed to search tokens',
+            details: error.message
+        });
+    }
+});
+
 // Get trending tokens from CoinMarketCap (better for TopCryptoTokensPanel)
 app.post('/trending-tokens', async (req, res) => {
     try {
