@@ -74,12 +74,13 @@ app.get('/status', (req, res) => {
     });
 });
 
-// IMMEDIATE EXECUTION FUNCTIONS (no cron jobs)
+// IMMEDIATE EXECUTION FUNCTIONS + AUTO-EXPIRATION
 // 
 // RESOLUTION STRATEGY:
 // - Crypto wagers: Resolve automatically when called (e.g., on expiry)
 // - Sports wagers: Check every 5 minutes until result found, then resolve
 // - Both: Map winners to positions (creator/acceptor) for token program compatibility
+// - Auto-expiration: Run every 5 minutes to expire overdue wagers
 
 // 1. Resolve Crypto Wager (always has a winner)
 app.post('/resolve-crypto-wager', async (req, res) => {
@@ -1942,7 +1943,22 @@ app.listen(PORT, () => {
     console.log(`📍 Health check: http://localhost:${PORT}/health`);
     console.log(`📊 Status: http://localhost:${PORT}/status`);
     console.log(`🔑 Authority: ${authorityKeypair.publicKey.toString()}`);
-    console.log(`⚡ Ready for immediate execution - no cron jobs!`);
+    console.log(`⚡ Ready for immediate execution + auto-expiration every 30 seconds!`);
+
+    // Start auto-expiration check every 15 seconds
+    setInterval(async () => {
+        try {
+            console.log('🔄 Running automatic expiration check...');
+            const expiredCount = await expireExpiredWagers();
+            if (expiredCount > 0) {
+                console.log(`✅ Auto-expired ${expiredCount} wagers`);
+            } else {
+                console.log('✅ No wagers expired in this cycle');
+            }
+        } catch (error) {
+            console.error('❌ Error in auto-expiration check:', error);
+        }
+    }, 15000); // 15 seconds = 15000 milliseconds
 });
 
 // Graceful shutdown
