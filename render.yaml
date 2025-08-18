@@ -16,11 +16,11 @@ services:
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
       - key: SOLANA_RPC_URL
-        value: https://api.mainnet-beta.solana.com
+        value: https://api.devnet.solana.com
       - key: SOLANA_WS_URL
-        value: wss://api.mainnet-beta.solana.com
+        value: wss://api.devnet.solana.com
       - key: WAGERFI_PROGRAM_ID
-        value: 8ztw62qUXetzSbCznGnXZ9bLMBiZUF7YMfPffaBXtkkt
+        value: 3trZZeVh3j9sx6H8ZYCdsouGnMjcyyGQoLqLE7CzD8sa
       - key: AUTHORITY_PRIVATE_KEY
         sync: false
       - key: TREASURY_WALLET_ADDRESS

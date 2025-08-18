@@ -1064,6 +1064,87 @@ async function updateUserStats(userId) {
     }
 }
 
+// CRYPTO TOKEN ENDPOINTS
+// Get token list from CoinMarketCap
+app.post('/token-list', async (req, res) => {
+    try {
+        const { apiKey, limit = 100, listingStatus = 'active' } = req.body;
+
+        if (!apiKey) {
+            return res.status(400).json({ error: 'API key is required' });
+        }
+
+        console.log(`🪙 Fetching token list (limit: ${limit}, status: ${listingStatus})`);
+
+        // Fetch from CoinMarketCap API
+        const response = await fetch(
+            `https://pro-api.coinmarketcap.com/v1/cryptocurrency/listings/latest?limit=${limit}&listing_status=${listingStatus}`,
+            {
+                headers: {
+                    'X-CMC_PRO_API_KEY': apiKey,
+                    'Accept': 'application/json'
+                }
+            }
+        );
+
+        if (!response.ok) {
+            throw new Error(`CoinMarketCap API error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log(`✅ Fetched ${data.data?.length || 0} tokens from CoinMarketCap`);
+
+        res.json(data);
+
+    } catch (error) {
+        console.error('❌ Error in token-list endpoint:', error);
+        res.status(500).json({ 
+            error: 'Failed to fetch token list',
+            details: error.message 
+        });
+    }
+});
+
+// Get token info by ID from CoinMarketCap
+app.post('/token-info', async (req, res) => {
+    try {
+        const { apiKey, id } = req.body;
+
+        if (!apiKey || !id) {
+            return res.status(400).json({ error: 'API key and token ID are required' });
+        }
+
+        console.log(`🪙 Fetching token info for ID: ${id}`);
+
+        // Fetch from CoinMarketCap API
+        const response = await fetch(
+            `https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?id=${id}`,
+            {
+                headers: {
+                    'X-CMC_PRO_API_KEY': apiKey,
+                    'Accept': 'application/json'
+                }
+            }
+        );
+
+        if (!response.ok) {
+            throw new Error(`CoinMarketCap API error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        console.log(`✅ Fetched token info for ID: ${id}`);
+
+        res.json(data);
+
+    } catch (error) {
+        console.error('❌ Error in token-info endpoint:', error);
+        res.status(500).json({ 
+            error: 'Failed to fetch token info',
+            details: error.message 
+        });
+    }
+});
+
 // Start the server
 app.listen(PORT, () => {
     console.log(`🚀 WagerFi Background Worker running on port ${PORT}`);
