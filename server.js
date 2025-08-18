@@ -1101,7 +1101,8 @@ async function resolveSportsWagerOnChain(wagerId, winnerPosition, creatorId, acc
                 throw new Error(`Failed to fetch sports wager data: ${wagerError?.message || 'Wager not found'}`);
             }
 
-            const wagerAccount = new PublicKey(wagerData.wager_id);
+            // Note: escrow_pda IS the wager account in the Solana program
+            const wagerAccount = new PublicKey(wagerData.escrow_pda);
             const escrowAccount = new PublicKey(wagerData.escrow_pda);
             const winnerWallet = winnerPosition === 'creator'
                 ? new PublicKey(wagerData.creator_address)
@@ -1198,7 +1199,8 @@ async function handleSportsDrawOnChain(wagerId, creatorId, acceptorId, amount) {
                 throw new Error(`Failed to fetch sports wager data: ${wagerError?.message || 'Wager not found'}`);
             }
 
-            const wagerAccount = new PublicKey(wagerData.wager_id);
+            // Note: escrow_pda IS the wager account in the Solana program
+            const wagerAccount = new PublicKey(wagerData.escrow_pda);
             const escrowAccount = new PublicKey(wagerData.escrow_pda);
             const creatorWallet = new PublicKey(wagerData.creator_address);
             const acceptorWallet = new PublicKey(wagerData.acceptor_address);
@@ -1293,7 +1295,8 @@ async function cancelWagerOnChain(wagerId, creatorId, amount) {
                 throw new Error(`Failed to fetch crypto wager data: ${wagerError?.message || 'Wager not found'}`);
             }
 
-            const wagerAccount = new PublicKey(wagerData.wager_id);
+            // Note: escrow_pda IS the wager account in the Solana program
+            const wagerAccount = new PublicKey(wagerData.escrow_pda);
             const escrowAccount = new PublicKey(wagerData.escrow_pda);
             const creatorWallet = new PublicKey(wagerData.creator_address);
 
@@ -1385,7 +1388,8 @@ async function handleExpiredWagerOnChain(wagerId, creatorId, amount) {
                 throw new Error(`Failed to fetch crypto wager data: ${wagerError?.message || 'Wager not found'}`);
             }
 
-            const wagerAccount = new PublicKey(wagerData.wager_id);
+            // Note: escrow_pda IS the wager account in the Solana program
+            const wagerAccount = new PublicKey(wagerData.escrow_pda);
             const escrowAccount = new PublicKey(wagerData.escrow_pda);
             const creatorWallet = new PublicKey(wagerData.creator_address);
 
@@ -1484,7 +1488,8 @@ async function acceptWagerOnChain(wagerId, creatorId, acceptorId, amount) {
                 throw new Error(`Failed to fetch acceptor user: ${userError?.message || 'User not found'}`);
             }
 
-            const wagerAccount = new PublicKey(wagerData.wager_id);
+            // Note: escrow_pda IS the wager account in the Solana program
+            const wagerAccount = new PublicKey(wagerData.escrow_pda);
             const escrowAccount = new PublicKey(wagerData.escrow_pda);
             const acceptorWallet = new PublicKey(acceptorUser.wallet_address);
 
@@ -1567,7 +1572,6 @@ async function handleExpiredCryptoWagers() {
         }
 
         if (!expiredWagers || expiredWagers.length === 0) {
-            console.log('✅ No expired crypto wagers to process');
             return;
         }
 
@@ -1720,7 +1724,7 @@ async function refundUnmatchedExpiredWager(wager) {
                 // Create notification for user
                 await createNotification(
                     wager.creator_id,
-                    'refund_processed',
+                    'wager_expired',
                     'Expired Wager Refunded!',
                     `Your unmatched crypto wager on ${wager.token_symbol} has expired and been refunded. Transaction: ${refundResult.signature}`
                 );
@@ -1794,7 +1798,7 @@ async function handleExpiredSportsWagers() {
 
         console.log(`🔍 Found ${expiredWagers?.length || 0} expired sports wagers to resolve/refund`);
         if (expiredWagers && expiredWagers.length > 0) {
-            console.log('🔍 Wagers to process:', expiredWagers.map(w => ({ id: w.id, status: w.status, expires_at: w.expires_at, acceptor_id: w.acceptor_id })));
+            console.log('🔍 Wagers to process:', expiredWagers.map(w => ({ id: w.id, status: w.status, expiry_time: w.expiry_time, acceptor_id: w.acceptor_id })));
         }
 
         if (fetchError) {
@@ -1803,7 +1807,6 @@ async function handleExpiredSportsWagers() {
         }
 
         if (!expiredWagers || expiredWagers.length === 0) {
-            console.log('✅ No expired sports wagers to process');
             return;
         }
 
@@ -1963,7 +1966,7 @@ async function refundUnmatchedExpiredSportsWager(wager) {
                 // Create notification for user
                 await createNotification(
                     wager.creator_id,
-                    'refund_processed',
+                    'wager_expired',
                     'Expired Sports Wager Refunded!',
                     `Your unmatched sports wager on ${wager.team1} vs ${wager.team2} has expired and been refunded. Transaction: ${refundResult.signature}`
                 );
@@ -2006,8 +2009,9 @@ async function processWagerRefundOnChain(wager) {
             console.log(`   Authority: ${authorityKeypair.publicKey.toString()}`);
 
             // Execute the handleExpiredWager instruction to refund the creator
+            // Use escrow_pda as the wager account (it's the actual Solana account)
             const signature = await executeProgramInstruction('handleExpiredWager', [
-                { pubkey: new PublicKey(wager.wager_id), isSigner: false, isWritable: true },
+                { pubkey: escrowAccount, isSigner: false, isWritable: true },
                 { pubkey: escrowAccount, isSigner: false, isWritable: true },
                 { pubkey: userWallet, isSigner: false, isWritable: true },
                 { pubkey: authorityKeypair.publicKey, isSigner: true, isWritable: true }
@@ -2236,7 +2240,7 @@ async function updateSingleUserStats(userId, stats) {
         // Get current user stats
         const { data: currentUser, error: fetchError } = await supabase
             .from('users')
-            .select('total_wagered, total_won, total_lost, win_count, loss_count, streak_count')
+            .select('total_wagered, total_won, total_lost, win_rate, streak_count')
             .eq('id', userId)
             .single();
 
@@ -2253,14 +2257,11 @@ async function updateSingleUserStats(userId, stats) {
             updated_at: new Date().toISOString()
         };
 
-        // Only update win/loss counts and streak if this is a win/loss scenario
+        // Only update win rate and streak if this is a win/loss scenario
         if (stats.won !== null) {
-            newStats.win_count = (currentUser.win_count || 0) + (stats.won ? 1 : 0);
-            newStats.loss_count = (currentUser.loss_count || 0) + (stats.won ? 0 : 1);
-
-            // Calculate win rate
-            const totalWagers = newStats.win_count + newStats.loss_count;
-            newStats.win_rate = totalWagers > 0 ? (newStats.win_count / totalWagers) * 100 : 0;
+            // Calculate win rate based on total_won vs total_lost
+            const totalWagers = (newStats.total_won + newStats.total_lost);
+            newStats.win_rate = totalWagers > 0 ? (newStats.total_won / totalWagers) * 100 : 0;
 
             // Calculate streak
             if (stats.won) {
@@ -2271,9 +2272,7 @@ async function updateSingleUserStats(userId, stats) {
                 newStats.streak_count = 0;
             }
         } else {
-            // This is just a wager acceptance, preserve existing win/loss stats
-            newStats.win_count = currentUser.win_count || 0;
-            newStats.loss_count = currentUser.loss_count || 0;
+            // This is just a wager acceptance, preserve existing win rate and streak
             newStats.win_rate = currentUser.win_rate || 0;
             newStats.streak_count = currentUser.streak_count || 0;
         }
@@ -2350,7 +2349,7 @@ async function updateUserStats(userId) {
 // Expire expired wagers automatically
 async function expireExpiredWagers() {
     try {
-        console.log('🔄 Checking for expired wagers...');
+        // Silent check for expired wagers (runs every 15 seconds)
 
         let totalExpired = 0;
 
@@ -2399,7 +2398,9 @@ async function expireExpiredWagers() {
 
         // Handle expired crypto wagers - resolve matched ones, refund unmatched ones
         // This will process both matched and active wagers that have expired
-        await handleExpiredCryptoWagers();
+        if (cryptoWagersToExpire && cryptoWagersToExpire.length > 0) {
+            await handleExpiredCryptoWagers();
+        }
 
         // Expire sports wagers
         // First, get the wagers that need to be expired
@@ -2412,7 +2413,7 @@ async function expireExpiredWagers() {
 
         console.log(`🔍 Found ${sportsWagersToExpire?.length || 0} expired sports wagers to process`);
         if (sportsWagersToExpire && sportsWagersToExpire.length > 0) {
-            console.log('🔍 Expired sports wagers:', sportsWagersToExpire.map(w => ({ id: w.id, status: w.status, expires_at: w.expires_at })));
+            console.log('🔍 Expired sports wagers:', sportsWagersToExpire.map(w => ({ id: w.id, status: w.status, expiry_time: w.expiry_time })));
         }
 
         if (sportsFetchError) {
@@ -2446,9 +2447,13 @@ async function expireExpiredWagers() {
 
         // Handle expired sports wagers - resolve matched ones, refund unmatched ones
         // This will process both matched and active wagers that have expired
-        await handleExpiredSportsWagers();
+        if (sportsWagersToExpire && sportsWagersToExpire.length > 0) {
+            await handleExpiredSportsWagers();
+        }
 
-        console.log(`✅ Expired ${totalExpired} wagers automatically`);
+        if (totalExpired > 0) {
+            console.log(`✅ Expired ${totalExpired} wagers automatically`);
+        }
         return totalExpired;
 
     } catch (error) {
@@ -2806,12 +2811,9 @@ app.listen(PORT, () => {
     // Start auto-expiration check every 15 seconds
     setInterval(async () => {
         try {
-            console.log('🔄 Running automatic expiration check...');
             const expiredCount = await expireExpiredWagers();
             if (expiredCount > 0) {
                 console.log(`✅ Auto-expired ${expiredCount} wagers`);
-            } else {
-                console.log('✅ No wagers expired in this cycle');
             }
         } catch (error) {
             console.error('❌ Error in auto-expiration check:', error);
