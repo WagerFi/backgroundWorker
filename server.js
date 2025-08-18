@@ -10,10 +10,18 @@ import cors from 'cors';
 dotenv.config();
 
 // Initialize Supabase client
+console.log('🔑 Environment variables check:');
+console.log('SUPABASE_URL:', process.env.SUPABASE_URL ? '✅ Set' : '❌ Missing');
+console.log('SUPABASE_SERVICE_ROLE_KEY:', process.env.SUPABASE_SERVICE_ROLE_KEY ?
+    `✅ Set (${process.env.SUPABASE_SERVICE_ROLE_KEY.substring(0, 20)}...)` : '❌ Missing');
+
 const supabase = createClient(
     process.env.SUPABASE_URL,
     process.env.SUPABASE_SERVICE_ROLE_KEY
 );
+
+// Test Supabase connection
+console.log('🔌 Testing Supabase connection...');
 
 // Initialize Solana connection (commented out until needed)
 // const connection = new Connection(process.env.SOLANA_RPC_URL, 'confirmed');
@@ -1990,7 +1998,21 @@ app.listen(PORT, () => {
     console.log(`📍 Health check: http://localhost:${PORT}/health`);
     console.log(`📊 Status: http://localhost:${PORT}/status`);
     console.log(`🔑 Authority: ${authorityKeypair.publicKey.toString()}`);
-    console.log(`⚡ Ready for immediate execution + auto-expiration every 30 seconds!`);
+    console.log(`⚡ Ready for immediate execution + auto-expiration every 15 seconds!`);
+
+    // Test Supabase connection
+    console.log('🔌 Testing Supabase connection...');
+    supabase.from('crypto_wagers').select('count', { count: 'exact', head: true })
+        .then(({ count, error }) => {
+            if (error) {
+                console.error('❌ Supabase connection failed:', error);
+            } else {
+                console.log(`✅ Supabase connection successful! Found ${count} crypto wagers`);
+            }
+        })
+        .catch(err => {
+            console.error('❌ Supabase connection test failed:', err);
+        });
 
     // Start auto-expiration check every 15 seconds
     setInterval(async () => {
