@@ -2059,6 +2059,174 @@ async function processWagerRefundOnChain(wager) {
 
 // HELPER FUNCTIONS
 
+// Resolve crypto wagers immediately when they expire (1-second precision)
+async function resolveExpiringCryptoWagers() {
+    try {
+        const now = new Date();
+
+        // Look for crypto wagers that are active and have expired within the last 2 seconds
+        // This ensures we catch them right at expiration
+        const { data: expiringWagers, error: fetchError } = await supabase
+            .from('crypto_wagers')
+            .select('*')
+            .eq('status', 'active')
+            .gte('expires_at', new Date(now.getTime() - 2000).toISOString()) // Expired within last 2 seconds
+            .lte('expires_at', now.toISOString()) // But not expired more than 2 seconds ago
+            .is('metadata->expiry_processed', null);
+
+        // Also check for wagers expiring in the next 1 second to be extra precise
+        const { data: aboutToExpireWagers, error: aboutToExpireError } = await supabase
+            .from('crypto_wagers')
+            .select('*')
+            .eq('status', 'active')
+            .gte('expires_at', now.toISOString()) // Not yet expired
+            .lte('expires_at', new Date(now.getTime() + 1000).toISOString()) // But expiring within next second
+            .is('metadata->expiry_processed', null);
+
+        if (aboutToExpireError) {
+            console.error('❌ Error fetching about-to-expire crypto wagers:', aboutToExpireError);
+        }
+
+        // Combine both sets of wagers
+        const allExpiringWagers = [
+            ...(expiringWagers || []),
+            ...(aboutToExpireWagers || [])
+        ];
+
+        if (fetchError) {
+            console.error('❌ Error fetching expiring crypto wagers:', fetchError);
+            return;
+        }
+
+        if (!allExpiringWagers || allExpiringWagers.length === 0) {
+            return;
+        }
+
+        console.log(`⚡ Found ${allExpiringWagers.length} crypto wagers expiring now - resolving immediately...`);
+
+
+
+        for (const wager of allExpiringWagers) {
+            try {
+                const wagerExpiryTime = new Date(wager.expires_at);
+                const timeUntilExpiry = wagerExpiryTime.getTime() - now.getTime();
+
+                console.log(`⚡ Immediate resolution for wager ${wager.wager_id}`);
+                console.log(`   Expiry time: ${wager.expires_at}`);
+                console.log(`   Time until expiry: ${timeUntilExpiry}ms`);
+
+                // If wager hasn't expired yet, wait until it does for maximum accuracy
+                if (timeUntilExpiry > 0) {
+                    console.log(`   ⏰ Waiting ${timeUntilExpiry}ms for exact expiry...`);
+                    await new Promise(resolve => setTimeout(resolve, timeUntilExpiry));
+                }
+
+                // Get the exact price at expiration time
+                const expiryPrice = await getCurrentCryptoPrice(wager.token_symbol);
+
+                console.log(`💰 Exact expiry price for ${wager.token_symbol}: $${expiryPrice} (target: $${wager.target_price})`);
+
+                // Determine winner based on prediction
+                let winnerId = null;
+                let winnerPosition = null;
+
+                if (wager.prediction_type === 'above') {
+                    if (expiryPrice > wager.target_price) {
+                        winnerId = wager.creator_id;
+                        winnerPosition = 'creator';
+                        console.log(`   ✅ Creator wins: ${expiryPrice} > ${wager.target_price}`);
+                    } else {
+                        winnerId = wager.acceptor_id;
+                        winnerPosition = 'acceptor';
+                        console.log(`   ✅ Acceptor wins: ${expiryPrice} <= ${wager.target_price}`);
+                    }
+                } else {
+                    if (expiryPrice < wager.target_price) {
+                        winnerId = wager.creator_id;
+                        winnerPosition = 'creator';
+                        console.log(`   ✅ Creator wins: ${expiryPrice} < ${wager.target_price}`);
+                    } else {
+                        winnerId = wager.acceptor_id;
+                        winnerPosition = 'acceptor';
+                        console.log(`   ✅ Acceptor wins: ${expiryPrice} >= ${wager.target_price}`);
+                    }
+                }
+
+                // Execute on-chain resolution immediately
+                const resolutionResult = await resolveCryptoWagerOnChain(
+                    wager.wager_id,
+                    winnerPosition,
+                    wager.creator_id,
+                    wager.acceptor_id,
+                    wager.amount
+                );
+
+                if (resolutionResult.success) {
+                    // Get winner's wallet address
+                    const winnerWalletAddress = winnerPosition === 'creator'
+                        ? wager.creator_address
+                        : wager.acceptor_address;
+
+                    // Update database with resolution
+                    const { error: updateError } = await supabase
+                        .from('crypto_wagers')
+                        .update({
+                            status: 'resolved',
+                            winner_id: winnerId,
+                            winner_address: winnerWalletAddress,
+                            winner_position: winnerPosition,
+                            resolution_price: expiryPrice,
+                            resolved_at: new Date().toISOString(),
+                            on_chain_signature: resolutionResult.signature,
+                            metadata: {
+                                ...(wager.metadata || {}),
+                                resolution_details: {
+                                    target_price: wager.target_price,
+                                    expiry_price: expiryPrice,
+                                    prediction_type: wager.prediction_type,
+                                    creator_position: wager.creator_position,
+                                    resolved_at: new Date().toISOString(),
+                                    resolution_timing: 'immediate_at_expiry',
+                                    resolution_delay_ms: Math.abs(timeUntilExpiry),
+                                    price_fetch_timestamp: new Date().toISOString()
+                                }
+                            }
+                        })
+                        .eq('id', wager.id);
+
+                    if (updateError) {
+                        console.error(`❌ Error updating wager ${wager.wager_id}:`, updateError);
+                    } else {
+                        // Create notification for winner
+                        await createNotification(winnerId, 'wager_resolved',
+                            'Wager Resolved!',
+                            `Your crypto wager on ${wager.token_symbol} has been resolved at expiry. You won ${wager.amount} SOL!`);
+
+                        // Update stats for both users involved in the wager
+                        await updateWagerUserStats(wager, winnerId, winnerPosition, 'crypto');
+
+                        // Mark as processed to prevent double-processing
+                        await markExpiryProcessed(wager.wager_id, 'crypto');
+
+                        console.log(`⚡ IMMEDIATE RESOLUTION COMPLETED for ${wager.wager_id} - Winner: ${winnerId}`);
+                    }
+                } else {
+                    console.error(`❌ Failed to immediately resolve wager ${wager.wager_id}:`, resolutionResult.error);
+
+                    // Even if resolution failed, mark as processed to prevent infinite retries
+                    await markExpiryProcessed(wager.wager_id, 'crypto');
+                }
+
+            } catch (error) {
+                console.error(`❌ Error in immediate resolution for wager ${wager.wager_id}:`, error);
+            }
+        }
+
+    } catch (error) {
+        console.error('❌ Error in resolveExpiringCryptoWagers:', error);
+    }
+}
+
 // Get current crypto price from CoinMarketCap API
 async function getCurrentCryptoPrice(symbol) {
     try {
@@ -2152,10 +2320,23 @@ async function getSportsGameResult(sport, team1, team2) {
 // Create notification
 async function createNotification(userId, type, title, message) {
     try {
+        // Get user's wallet address for the notification
+        const { data: user, error: userError } = await supabase
+            .from('users')
+            .select('wallet_address')
+            .eq('id', userId)
+            .single();
+
+        if (userError || !user?.wallet_address) {
+            console.error(`❌ Error fetching wallet address for user ${userId}:`, userError);
+            return;
+        }
+
         const { error } = await supabase
             .from('notifications')
             .insert({
                 user_id: userId,
+                user_address: user.wallet_address,
                 type: type,
                 title: title,
                 message: message
@@ -2163,6 +2344,17 @@ async function createNotification(userId, type, title, message) {
 
         if (error) {
             console.error('❌ Error creating notification:', error);
+            console.error('   Details:', {
+                user_id: userId,
+                user_address: user.wallet_address,
+                type: type,
+                title: title,
+                message: message
+            });
+        } else {
+            console.log(`✅ Created notification for user ${userId} (${user.wallet_address}): ${type}`);
+            console.log(`   Title: ${title}`);
+            console.log(`   Message: ${message}`);
         }
     } catch (error) {
         console.error('❌ Error creating notification:', error);
@@ -2360,7 +2552,8 @@ async function expireExpiredWagers() {
             .from('crypto_wagers')
             .select('id, status, expires_at, metadata')
             .in('status', ['open', 'matched', 'active'])
-            .lt('expires_at', new Date().toISOString());
+            .lt('expires_at', new Date().toISOString())
+            .is('metadata->expiry_processed', null); // Only process unprocessed wagers
 
         console.log(`🔍 Found ${cryptoWagersToExpire?.length || 0} expired crypto wagers to process`);
         if (cryptoWagersToExpire && cryptoWagersToExpire.length > 0) {
@@ -2409,7 +2602,8 @@ async function expireExpiredWagers() {
             .from('sports_wagers')
             .select('id, status, expiry_time, metadata')
             .in('status', ['open', 'matched', 'active'])
-            .lt('expiry_time', new Date().toISOString());
+            .lt('expiry_time', new Date().toISOString())
+            .is('metadata->expiry_processed', null); // Only process unprocessed wagers
 
         console.log(`🔍 Found ${sportsWagersToExpire?.length || 0} expired sports wagers to process`);
         if (sportsWagersToExpire && sportsWagersToExpire.length > 0) {
@@ -2820,6 +3014,15 @@ app.listen(PORT, () => {
         }
     }, 15000); // 15 seconds = 15000 milliseconds
 
+    // Start immediate crypto wager resolution check every 1 second for precise timing
+    setInterval(async () => {
+        try {
+            await resolveExpiringCryptoWagers();
+        } catch (error) {
+            console.error('❌ Error in immediate crypto resolution check:', error);
+        }
+    }, 1000); // 1 second = 1000 milliseconds
+
     // Also run an immediate check for any wagers that might have already expired
     console.log('🚀 Running immediate expiration check for any already-expired wagers...');
     (async () => {
@@ -2832,6 +3035,30 @@ app.listen(PORT, () => {
             }
         } catch (error) {
             console.error('❌ Error in immediate expiration check:', error);
+        }
+    })();
+
+    // Test notification creation on startup
+    console.log('🧪 Testing notification system...');
+    (async () => {
+        try {
+            // Get a test user ID from the users table
+            const { data: testUser, error: userError } = await supabase
+                .from('users')
+                .select('id, wallet_address')
+                .limit(1)
+                .single();
+
+            if (userError || !testUser) {
+                console.error('❌ No test user found for notification test:', userError);
+                return;
+            }
+
+            console.log(`🧪 Testing notification for user: ${testUser.id} (${testUser.wallet_address})`);
+            await createNotification(testUser.id, 'system_announcement', 'Test Notification', 'Background worker is running and notifications are working!');
+            console.log('✅ Notification test completed');
+        } catch (error) {
+            console.error('❌ Notification test failed:', error);
         }
     })();
 });
