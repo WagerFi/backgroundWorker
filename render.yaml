@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: wagerfi-bgworker
+    env: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SOLANA_RPC_URL
+        value: https://api.mainnet-beta.solana.com
+      - key: SOLANA_WS_URL
+        value: wss://api.mainnet-beta.solana.com
+      - key: WAGERFI_PROGRAM_ID
+        value: 8ztw62qUXetzSbCznGnXZ9bLMBiZUF7YMfPffaBXtkkt
+      - key: AUTHORITY_PRIVATE_KEY
+        sync: false
+      - key: COINMARKETCAP_API_KEY
+        sync: false
