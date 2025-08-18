@@ -814,13 +814,39 @@ app.post('/accept-wager', async (req, res) => {
             return res.status(500).json({ error: acceptanceResult.error });
         }
 
-        // Update database
+        // Get acceptor's wallet address
+        const { data: acceptorUser, error: userError } = await supabase
+            .from('users')
+            .select('wallet_address')
+            .eq('id', acceptor_id)
+            .single();
+
+        if (userError || !acceptorUser) {
+            console.error(`❌ Error fetching acceptor user ${acceptor_id}:`, userError);
+            return res.status(500).json({ error: 'Failed to fetch acceptor user' });
+        }
+
+        // Calculate opponent position based on wager type and creator position
+        let opponentPosition;
+        if (wager_type === 'crypto') {
+            // For crypto: >= becomes <=, <= becomes >=
+            opponentPosition = wager.creator_position === '>=' ? '<=' : '>=';
+        } else {
+            // For sports: home becomes away, away becomes home
+            opponentPosition = wager.creator_position === 'home' ? 'away' : 'home';
+        }
+
+        // Update database with all required fields
         const { error: updateError } = await supabase
             .from(tableName)
             .update({
                 status: 'active',
                 acceptor_id: acceptor_id,
-                on_chain_signature: acceptanceResult.signature
+                acceptor_address: acceptorUser.wallet_address,
+                opponent_address: acceptorUser.wallet_address,
+                opponent_position: opponentPosition,
+                on_chain_signature: acceptanceResult.signature,
+                updated_at: new Date().toISOString()
             })
             .eq('id', wager.id);
 
@@ -1428,7 +1454,7 @@ async function acceptWagerOnChain(wagerId, creatorId, acceptorId, amount) {
             // Get wager and escrow accounts from database
             const { data: wagerData, error: wagerError } = await supabase
                 .from('crypto_wagers')
-                .select('wager_id, escrow_pda, acceptor_address')
+                .select('wager_id, escrow_pda')
                 .eq('wager_id', wagerId)
                 .single();
 
@@ -1436,9 +1462,20 @@ async function acceptWagerOnChain(wagerId, creatorId, acceptorId, amount) {
                 throw new Error(`Failed to fetch crypto wager data: ${wagerError?.message || 'Wager not found'}`);
             }
 
+            // Get acceptor user to get their wallet address
+            const { data: acceptorUser, error: userError } = await supabase
+                .from('users')
+                .select('wallet_address')
+                .eq('id', acceptorId)
+                .single();
+
+            if (userError || !acceptorUser) {
+                throw new Error(`Failed to fetch acceptor user: ${userError?.message || 'User not found'}`);
+            }
+
             const wagerAccount = new PublicKey(wagerData.wager_id);
             const escrowAccount = new PublicKey(wagerData.escrow_pda);
-            const acceptorWallet = new PublicKey(wagerData.acceptor_address);
+            const acceptorWallet = new PublicKey(acceptorUser.wallet_address);
 
             console.log(`   Wager Account: ${wagerAccount.toString()}`);
             console.log(`   Escrow Account: ${escrowAccount.toString()}`);
