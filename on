@@ -1,0 +1,3 @@
+[33m90707c8[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m Fix variable initialization order and add fallback for treasury wallet
+[33mc0e07ff[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m Add missing @project-serum/anchor dependency for Solana program integration
+[33mc81d360[m Update to load real WagerFi IDL from file instead of hardcoded structure

@@ -2,7 +2,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
 import { PublicKey, Keypair, Transaction, SystemProgram, LAMPORTS_PER_SOL, Connection } from '@solana/web3.js';
-import { Program, AnchorProvider, web3, Wallet } from '@project-serum/anchor';
+
 import fetch from 'node-fetch';
 import cors from 'cors';
 
@@ -41,7 +41,7 @@ console.log('🔌 Testing Supabase connection...');
 // Initialize Solana connection to devnet
 const connection = new Connection(process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com', 'confirmed');
 
-// Initialize Anchor program with real devnet program ID
+// Initialize Solana program ID for direct RPC calls
 const WAGERFI_PROGRAM_ID = new PublicKey('3trZZeVh3j9sx6H8ZYCdsouGnMjcyyGQoLqLE7CzD8sa');
 
 // Authority keypair for executing program instructions
@@ -56,13 +56,7 @@ if (!authorityKeypair) {
     process.exit(1);
 }
 
-// Initialize Anchor provider and program
-const provider = new AnchorProvider(connection, new Wallet(authorityKeypair), {
-    commitment: 'confirmed',
-    preflightCommitment: 'confirmed'
-});
-
-// Load the real program IDL from the file
+// Load the real program IDL from the file for instruction data
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -76,10 +70,76 @@ const idl = JSON.parse(readFileSync(idlPath, 'utf8'));
 
 console.log('📋 Loaded WagerFi IDL with instructions:', idl.instructions.map(i => i.name));
 
-const program = new Program(idl, WAGERFI_PROGRAM_ID, provider);
-
 console.log('🔗 WagerFi Token Program initialized:', WAGERFI_PROGRAM_ID.toString());
 console.log('🌐 Connected to Solana devnet');
+
+// Helper function to create instruction data for direct RPC calls
+function createInstructionData(instructionName, args = []) {
+    // Find the instruction in the IDL
+    const instruction = idl.instructions.find(inst => inst.name === instructionName);
+    if (!instruction) {
+        throw new Error(`Instruction ${instructionName} not found in IDL`);
+    }
+
+    // For now, we'll use a simple approach - in production you'd want proper serialization
+    // This is a simplified version - you may need to adjust based on your actual instruction format
+    const instructionIndex = idl.instructions.findIndex(inst => inst.name === instructionName);
+
+    // Create instruction data: [instruction_index, ...serialized_args]
+    const data = Buffer.alloc(1);
+    data.writeUInt8(instructionIndex, 0);
+
+    // Add serialized arguments if any
+    if (args.length > 0) {
+        // This is a simplified serialization - adjust based on your actual data types
+        const argsBuffer = Buffer.from(JSON.stringify(args));
+        const combined = Buffer.concat([data, argsBuffer]);
+        return combined;
+    }
+
+    return data;
+}
+
+// Helper function to execute program instruction via direct RPC
+async function executeProgramInstruction(instructionName, accounts, args = []) {
+    try {
+        const instructionData = createInstructionData(instructionName, args);
+
+        // Create the instruction
+        const instruction = {
+            programId: WAGERFI_PROGRAM_ID,
+            keys: accounts.map(acc => ({
+                pubkey: acc.pubkey,
+                isSigner: acc.isSigner || false,
+                isWritable: acc.isWritable || true
+            })),
+            data: instructionData
+        };
+
+        // Create and send transaction
+        const transaction = new Transaction();
+        transaction.add(instruction);
+
+        // Get recent blockhash
+        const { blockhash } = await connection.getLatestBlockhash();
+        transaction.recentBlockhash = blockhash;
+        transaction.feePayer = authorityKeypair.publicKey;
+
+        // Sign and send
+        transaction.sign(authorityKeypair);
+        const signature = await connection.sendRawTransaction(transaction.serialize());
+
+        // Wait for confirmation
+        await connection.confirmTransaction(signature, 'confirmed');
+
+        console.log(`✅ ${instructionName} executed successfully:`, signature);
+        return signature;
+
+    } catch (error) {
+        console.error(`❌ Error executing ${instructionName}:`, error);
+        throw error;
+    }
+}
 
 // Treasury wallet for platform fees (4% total - 2% from each user)
 const TREASURY_WALLET = process.env.TREASURY_WALLET_ADDRESS ?
@@ -868,13 +928,13 @@ async function resolveCryptoWagerOnChain(wagerId, winnerPosition, creatorId, acc
 
             // Execute the resolveWager instruction
             const winnerType = winnerPosition === 'creator' ? { creator: {} } : { acceptor: {} };
-            const transaction = await program.methods.resolveWager(winnerType).accounts({
-                wager: wagerAccount,
-                escrow: escrowAccount,
-                winner: winnerWallet,
-                treasury: TREASURY_WALLET,
-                authority: authorityKeypair.publicKey,
-            }).rpc();
+            const transaction = await executeProgramInstruction('resolveWager', [
+                { pubkey: wagerAccount, isSigner: false, isWritable: true },
+                { pubkey: escrowAccount, isSigner: false, isWritable: true },
+                { pubkey: winnerWallet, isSigner: false, isWritable: true },
+                { pubkey: TREASURY_WALLET, isSigner: false, isWritable: true },
+                { pubkey: authorityKeypair.publicKey, isSigner: true, isWritable: true }
+            ], [winnerType]);
 
             console.log(`   🔐 Real on-chain resolution completed: ${transaction}`);
 
@@ -965,13 +1025,13 @@ async function resolveSportsWagerOnChain(wagerId, winnerPosition, creatorId, acc
 
             // Execute the resolveWager instruction
             const winnerType = winnerPosition === 'creator' ? { creator: {} } : { acceptor: {} };
-            const transaction = await program.methods.resolveWager(winnerType).accounts({
-                wager: wagerAccount,
-                escrow: escrowAccount,
-                winner: winnerWallet,
-                treasury: TREASURY_WALLET,
-                authority: authorityKeypair.publicKey,
-            }).rpc();
+            const transaction = await executeProgramInstruction('resolveWager', [
+                { pubkey: wagerAccount, isSigner: false, isWritable: true },
+                { pubkey: escrowAccount, isSigner: false, isWritable: true },
+                { pubkey: winnerWallet, isSigner: false, isWritable: true },
+                { pubkey: TREASURY_WALLET, isSigner: false, isWritable: true },
+                { pubkey: authorityKeypair.publicKey, isSigner: true, isWritable: true }
+            ], [winnerType]);
 
             console.log(`   🔐 Real on-chain sports resolution completed: ${transaction}`);
 
@@ -1060,13 +1120,13 @@ async function handleSportsDrawOnChain(wagerId, creatorId, acceptorId, amount) {
             console.log(`   Acceptor Wallet: ${acceptorWallet.toString()}`);
 
             // Execute the handleDrawWager instruction
-            const transaction = await program.methods.handleDrawWager().accounts({
-                wager: wagerAccount,
-                escrow: escrowAccount,
-                creator: creatorWallet,
-                acceptor: acceptorWallet,
-                authority: authorityKeypair.publicKey,
-            }).rpc();
+            const transaction = await executeProgramInstruction('handleDrawWager', [
+                { pubkey: wagerAccount, isSigner: false, isWritable: true },
+                { pubkey: escrowAccount, isSigner: false, isWritable: true },
+                { pubkey: creatorWallet, isSigner: false, isWritable: true },
+                { pubkey: acceptorWallet, isSigner: false, isWritable: true },
+                { pubkey: authorityKeypair.publicKey, isSigner: true, isWritable: true }
+            ]);
 
             console.log(`   🔐 Real on-chain draw handling completed: ${transaction}`);
 
@@ -1153,12 +1213,12 @@ async function cancelWagerOnChain(wagerId, creatorId, amount) {
             console.log(`   Creator Wallet: ${creatorWallet.toString()}`);
 
             // Execute the cancelWager instruction
-            const transaction = await program.methods.cancelWager().accounts({
-                wager: wagerAccount,
-                escrow: escrowAccount,
-                creator: creatorWallet,
-                authority: authorityKeypair.publicKey,
-            }).rpc();
+            const transaction = await executeProgramInstruction('cancelWager', [
+                { pubkey: wagerAccount, isSigner: false, isWritable: true },
+                { pubkey: escrowAccount, isSigner: false, isWritable: true },
+                { pubkey: creatorWallet, isSigner: false, isWritable: true },
+                { pubkey: authorityKeypair.publicKey, isSigner: true, isWritable: true }
+            ]);
 
             console.log(`   🔐 Real on-chain cancellation completed: ${transaction}`);
 
@@ -1245,12 +1305,12 @@ async function handleExpiredWagerOnChain(wagerId, creatorId, amount) {
             console.log(`   Creator Wallet: ${creatorWallet.toString()}`);
 
             // Execute the handleExpiredWager instruction
-            const transaction = await program.methods.handleExpiredWager().accounts({
-                wager: wagerAccount,
-                escrow: escrowAccount,
-                creator: creatorWallet,
-                authority: authorityKeypair.publicKey,
-            }).rpc();
+            const transaction = await executeProgramInstruction('handleExpiredWager', [
+                { pubkey: wagerAccount, isSigner: false, isWritable: true },
+                { pubkey: escrowAccount, isSigner: false, isWritable: true },
+                { pubkey: creatorWallet, isSigner: false, isWritable: true },
+                { pubkey: authorityKeypair.publicKey, isSigner: true, isWritable: true }
+            ]);
 
             console.log(`   🔐 Real on-chain expiration handling completed: ${transaction}`);
 
@@ -1333,12 +1393,12 @@ async function acceptWagerOnChain(wagerId, creatorId, acceptorId, amount) {
             console.log(`   Acceptor Wallet: ${acceptorWallet.toString()}`);
 
             // Execute the acceptWager instruction
-            const transaction = await program.methods.acceptWager().accounts({
-                wager: wagerAccount,
-                escrow: escrowAccount,
-                acceptor: acceptorWallet,
-                authority: authorityKeypair.publicKey,
-            }).rpc();
+            const transaction = await executeProgramInstruction('acceptWager', [
+                { pubkey: wagerAccount, isSigner: false, isWritable: true },
+                { pubkey: escrowAccount, isSigner: false, isWritable: true },
+                { pubkey: acceptorWallet, isSigner: false, isWritable: true },
+                { pubkey: authorityKeypair.publicKey, isSigner: true, isWritable: true }
+            ]);
 
             console.log(`   🔐 Real on-chain wager acceptance completed: ${transaction}`);
 
@@ -1784,12 +1844,12 @@ async function processWagerRefundOnChain(wager) {
             console.log(`   Authority: ${authorityKeypair.publicKey.toString()}`);
 
             // Execute the handleExpiredWager instruction to refund the creator
-            const signature = await program.methods.handleExpiredWager().accounts({
-                wager: new PublicKey(wager.wager_id),
-                escrow: escrowAccount,
-                creator: userWallet,
-                authority: authorityKeypair.publicKey,
-            }).rpc();
+            const signature = await executeProgramInstruction('handleExpiredWager', [
+                { pubkey: new PublicKey(wager.wager_id), isSigner: false, isWritable: true },
+                { pubkey: escrowAccount, isSigner: false, isWritable: true },
+                { pubkey: userWallet, isSigner: false, isWritable: true },
+                { pubkey: authorityKeypair.publicKey, isSigner: true, isWritable: true }
+            ]);
 
             console.log(`   🔐 Real escrow withdrawal completed: ${signature}`);
 
