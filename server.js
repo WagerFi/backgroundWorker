@@ -639,6 +639,37 @@ app.post('/cancel-wager', async (req, res) => {
             .select('*')
             .eq('wager_id', wager_id);
 
+        // Also check if this might be a UUID (database row ID) instead of wager_id
+        if (allWagersError) {
+            console.error(`❌ Error fetching all wagers with ID ${wager_id}:`, allWagersError);
+            return res.status(500).json({ error: 'Database query failed' });
+        }
+
+        if (!allWagers || allWagers.length === 0) {
+            // Try searching by the database row ID instead
+            console.log(`🔍 No wagers found with wager_id: ${wager_id}, trying database row ID...`);
+            const { data: wagerById, error: idError } = await supabase
+                .from(tableName)
+                .select('*')
+                .eq('id', wager_id);
+
+            if (idError) {
+                console.error(`❌ Error fetching wager by ID ${wager_id}:`, idError);
+                return res.status(500).json({ error: 'Database query failed' });
+            }
+
+            if (wagerById && wagerById.length > 0) {
+                console.log(`🔍 Found wager by database ID:`, wagerById[0]);
+                // Use the wager_id from the found record
+                const actualWagerId = wagerById[0].wager_id;
+                if (actualWagerId) {
+                    console.log(`🔍 Using actual wager_id: ${actualWagerId}`);
+                    // Recursively call this function with the correct wager_id
+                    return res.redirect(307, `/cancel-wager`);
+                }
+            }
+        }
+
         if (allWagersError) {
             console.error(`❌ Error fetching all wagers with ID ${wager_id}:`, allWagersError);
             return res.status(500).json({ error: 'Database query failed' });
