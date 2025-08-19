@@ -107,7 +107,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 console.log(`🔍 Deriving correct PDAs for resolveWager`);
                 const resolveWagerPDA = PublicKey.findProgramAddressSync(
                     [Buffer.from("wager"), Buffer.from(accounts.wagerId)],
-                    PROGRAM_ID
+                    WAGERFI_PROGRAM_ID
                 )[0];
                 const resolveEscrowPDA = new PublicKey(accounts.escrowPda);
 
@@ -293,7 +293,7 @@ async function createNotification(userId, type, title, message, data = {}) {
 // Treasury wallet for platform fees (4% total - 2% from each user)
 const TREASURY_WALLET = process.env.TREASURY_WALLET_ADDRESS ?
     new PublicKey(process.env.TREASURY_WALLET_ADDRESS) :
-    new PublicKey('11111111111111111111111111111111'); // Fallback to system program if not set
+    new PublicKey('GPLMWDSiwmhqDYYDgs12XBAcRtAJRGPufm268xKqWFgi'); // Fallback to WagerFi treasury
 
 // Platform fee configuration
 const PLATFORM_FEE_PERCENTAGE = 0.04; // 4% total (2% from each user)
