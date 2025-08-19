@@ -103,20 +103,15 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
 
         switch (instructionName) {
             case 'resolveWager':
-                const [wagerPDA] = PublicKey.findProgramAddressSync(
-                    [Buffer.from('wager'), Buffer.from(accounts.wagerId)],
-                    WAGERFI_PROGRAM_ID
-                );
-                const [escrowPDA] = PublicKey.findProgramAddressSync(
-                    [Buffer.from('escrow'), Buffer.from(accounts.wagerId)],
-                    WAGERFI_PROGRAM_ID
-                );
+                // Use existing PDAs to prevent account creation requiring rent
+                const resolveWagerPDA = new PublicKey(accounts.wagerId);
+                const resolveEscrowPDA = new PublicKey(accounts.escrowPda || accounts.wagerId);
 
                 result = await anchorProgram.methods
                     .resolveWager({ [args.winner.toLowerCase()]: {} })
                     .accounts({
-                        wager: wagerPDA,
-                        escrow: escrowPDA,
+                        wager: resolveWagerPDA,
+                        escrow: resolveEscrowPDA,
                         winner: new PublicKey(accounts.winnerPubkey),
                         treasury: TREASURY_WALLET,
                         authority: authorityKeypair.publicKey,
@@ -126,20 +121,33 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 break;
 
             case 'handleExpiredWager':
-                const [wagerPDA2] = PublicKey.findProgramAddressSync(
-                    [Buffer.from('wager'), Buffer.from(accounts.wagerId)],
-                    WAGERFI_PROGRAM_ID
-                );
-                const [escrowPDA2] = PublicKey.findProgramAddressSync(
-                    [Buffer.from('escrow'), Buffer.from(accounts.wagerId)],
-                    WAGERFI_PROGRAM_ID
-                );
+                // Use the existing PDA from the database instead of creating new ones
+                // This prevents account creation that requires rent from authority wallet
+                const expiredWagerPDA = new PublicKey(accounts.wagerId);
+                const expiredEscrowPDA = new PublicKey(accounts.escrowPda || accounts.wagerId);
+
+                // Verify accounts exist before proceeding
+                try {
+                    const wagerAccount = await anchorProgram.account.wager.fetch(expiredWagerPDA);
+                    const escrowBalance = await anchorProgram.provider.connection.getBalance(expiredEscrowPDA);
+
+                    console.log(`✅ Wager account verified: ${expiredWagerPDA.toString()}`);
+                    console.log(`✅ Escrow account verified: ${expiredEscrowPDA.toString()}`);
+                    console.log(`✅ Escrow balance: ${escrowBalance / LAMPORTS_PER_SOL} SOL`);
+
+                    if (escrowBalance === 0) {
+                        throw new Error('Escrow account has no funds');
+                    }
+                } catch (accountError) {
+                    console.error('❌ Account verification failed:', accountError);
+                    throw new Error(`Account verification failed: ${accountError.message}`);
+                }
 
                 result = await anchorProgram.methods
                     .handleExpiredWager()
                     .accounts({
-                        wager: wagerPDA2,
-                        escrow: escrowPDA2,
+                        wager: expiredWagerPDA,
+                        escrow: expiredEscrowPDA,
                         creator: new PublicKey(accounts.creatorPubkey),
                         authority: authorityKeypair.publicKey,
                     })
@@ -148,20 +156,15 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 break;
 
             case 'cancelWager':
-                const [wagerPDA3] = PublicKey.findProgramAddressSync(
-                    [Buffer.from('wager'), Buffer.from(accounts.wagerId)],
-                    WAGERFI_PROGRAM_ID
-                );
-                const [escrowPDA3] = PublicKey.findProgramAddressSync(
-                    [Buffer.from('escrow'), Buffer.from(accounts.wagerId)],
-                    WAGERFI_PROGRAM_ID
-                );
+                // Use existing PDAs to prevent account creation requiring rent
+                const cancelWagerPDA = new PublicKey(accounts.wagerId);
+                const cancelEscrowPDA = new PublicKey(accounts.escrowPda || accounts.wagerId);
 
                 result = await anchorProgram.methods
                     .cancelWager()
                     .accounts({
-                        wager: wagerPDA3,
-                        escrow: escrowPDA3,
+                        wager: cancelWagerPDA,
+                        escrow: cancelEscrowPDA,
                         creator: new PublicKey(accounts.creatorPubkey),
                         authority: authorityKeypair.publicKey,
                     })
@@ -170,20 +173,15 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 break;
 
             case 'handleDrawWager':
-                const [wagerPDA4] = PublicKey.findProgramAddressSync(
-                    [Buffer.from('wager'), Buffer.from(accounts.wagerId)],
-                    WAGERFI_PROGRAM_ID
-                );
-                const [escrowPDA4] = PublicKey.findProgramAddressSync(
-                    [Buffer.from('escrow'), Buffer.from(accounts.wagerId)],
-                    WAGERFI_PROGRAM_ID
-                );
+                // Use existing PDAs to prevent account creation requiring rent
+                const drawWagerPDA = new PublicKey(accounts.wagerId);
+                const drawEscrowPDA = new PublicKey(accounts.escrowPda || accounts.wagerId);
 
                 result = await anchorProgram.methods
                     .handleDrawWager()
                     .accounts({
-                        wager: wagerPDA4,
-                        escrow: escrowPDA4,
+                        wager: drawWagerPDA,
+                        escrow: drawEscrowPDA,
                         creator: new PublicKey(accounts.creatorPubkey),
                         acceptor: new PublicKey(accounts.acceptorPubkey),
                         authority: authorityKeypair.publicKey,
@@ -193,20 +191,15 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 break;
 
             case 'acceptWager':
-                const [wagerPDA5] = PublicKey.findProgramAddressSync(
-                    [Buffer.from('wager'), Buffer.from(accounts.wagerId)],
-                    WAGERFI_PROGRAM_ID
-                );
-                const [escrowPDA5] = PublicKey.findProgramAddressSync(
-                    [Buffer.from('escrow'), Buffer.from(accounts.wagerId)],
-                    WAGERFI_PROGRAM_ID
-                );
+                // Use existing PDAs to prevent account creation requiring rent
+                const acceptWagerPDA = new PublicKey(accounts.wagerId);
+                const acceptEscrowPDA = new PublicKey(accounts.escrowPda || accounts.wagerId);
 
                 result = await anchorProgram.methods
                     .acceptWager()
                     .accounts({
-                        wager: wagerPDA5,
-                        escrow: escrowPDA5,
+                        wager: acceptWagerPDA,
+                        escrow: acceptEscrowPDA,
                         acceptor: new PublicKey(accounts.acceptorPubkey),
                         authority: authorityKeypair.publicKey,
                     })
@@ -1482,7 +1475,8 @@ async function handleExpiredWagerOnChain(wagerId, creatorId, amount) {
 
             // Execute the handleExpiredWager instruction
             const transaction = await executeProgramInstruction('handleExpiredWager', {
-                wagerId: wagerData.wager_id,
+                wagerId: wagerData.escrow_pda, // Use the escrow PDA as the wager ID
+                escrowPda: wagerData.escrow_pda, // Pass the escrow PDA explicitly
                 creatorPubkey: creatorWallet.toString()
             });
 
@@ -2103,7 +2097,8 @@ async function processWagerRefundOnChain(wager) {
             // Execute the handleExpiredWager instruction to refund the creator
             // Use escrow_pda as the wager account (it's the actual Solana account)
             const signature = await executeProgramInstruction('handleExpiredWager', {
-                wagerId: wager.wager_id,
+                wagerId: wager.escrow_pda, // Use the escrow PDA as the wager ID
+                escrowPda: wager.escrow_pda, // Pass the escrow PDA explicitly
                 creatorPubkey: userWallet.toString()
             });
 
