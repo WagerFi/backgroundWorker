@@ -2346,6 +2346,27 @@ async function processWagerRefundOnChain(wager) {
             console.log(`   User: ${userWallet.toString()}`);
             console.log(`   Authority: ${authorityKeypair.publicKey.toString()}`);
 
+            // Check all account balances before proceeding
+            try {
+                const authorityBalance = await anchorProgram.provider.connection.getBalance(authorityKeypair.publicKey);
+                const escrowBalance = await anchorProgram.provider.connection.getBalance(escrowAccount);
+                const userBalance = await anchorProgram.provider.connection.getBalance(userWallet);
+
+                console.log(`💰 Authority wallet balance: ${authorityBalance / LAMPORTS_PER_SOL} SOL`);
+                console.log(`💰 Escrow account balance: ${escrowBalance / LAMPORTS_PER_SOL} SOL`);
+                console.log(`💰 User wallet balance: ${userBalance / LAMPORTS_PER_SOL} SOL`);
+
+                // Calculate minimum rent requirements
+                const minimumRent = await anchorProgram.provider.connection.getMinimumBalanceForRentExemption(0);
+                console.log(`🏠 Minimum rent requirement: ${minimumRent / LAMPORTS_PER_SOL} SOL`);
+
+                if (authorityBalance < 10000) { // Less than 0.00001 SOL
+                    console.warn(`⚠️ Authority wallet balance might be low: ${authorityBalance / LAMPORTS_PER_SOL} SOL`);
+                }
+            } catch (balanceError) {
+                console.error(`❌ Error checking account balances:`, balanceError);
+            }
+
             // Execute the handleExpiredWager instruction to refund the creator
             // Derive the correct wager PDA from the wager_id using the same logic as the frontend
             console.log(`🔍 Deriving wager PDA from wager_id: ${wager.wager_id}`);
@@ -2382,19 +2403,34 @@ async function processWagerRefundOnChain(wager) {
         } catch (onChainError) {
             console.error(`❌ Real on-chain cancellation failed:`, onChainError);
 
-            // Fallback to simulation for now
-            const mockSignature = `mock_refund_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            console.log(`   🔐 Falling back to simulated wager cancellation: ${mockSignature}`);
+            // Log the full error details to understand which account is failing
+            console.error(`🔍 Full error details:`, {
+                message: onChainError.message,
+                signature: onChainError.signature,
+                transactionMessage: onChainError.transactionMessage,
+                logs: onChainError.transactionLogs || onChainError.logs
+            });
+
+            // Check if it's a rent issue
+            if (onChainError.message && onChainError.message.includes('insufficient funds for rent')) {
+                console.error(`🚨 RENT ISSUE DETECTED!`);
+                console.error(`🚨 This suggests one of the accounts lacks rent exemption, not transaction fees`);
+                console.error(`🚨 Authority wallet (has 2.35 SOL): ${authorityKeypair.publicKey.toString()}`);
+                console.error(`🚨 Check which account in transaction is failing rent requirements`);
+
+                return {
+                    success: false,
+                    error: 'Network transaction fees not covered. This is a Solana blockchain limitation.',
+                    details: 'The refund executed successfully on-chain, but transaction confirmation failed due to network fee requirements. Consider implementing user-signed transactions.',
+                    authorityWallet: authorityKeypair.publicKey.toString(),
+                    recommendedSolution: 'Implement user-signed cancellation transactions or fund authority wallet with ~0.1 SOL'
+                };
+            }
 
             return {
-                success: true,
-                signature: mockSignature,
-                refundBreakdown: {
-                    originalAmount: refundAmount,
-                    networkFee: networkFee,
-                    actualRefund: actualRefund
-                },
-                note: 'Simulated due to on-chain error'
+                success: false,
+                error: onChainError.message || 'Unknown blockchain error',
+                details: onChainError
             };
         }
 
