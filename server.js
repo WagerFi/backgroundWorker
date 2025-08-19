@@ -2867,18 +2867,16 @@ async function updateWagerUserStats(wager, winnerId, winnerPosition, wagerType =
         // Update creator stats
         await updateSingleUserStats(creatorId, {
             total_wagered: wagerAmount,
-            total_won: creatorWon ? wagerAmount : 0,
-            total_lost: creatorWon ? 0 : wagerAmount,
-            won: creatorWon,
+            won: winnerId && winnerPosition ? creatorWon : null, // null for draws
+            is_draw: !winnerId || !winnerPosition,
             wager_type: wagerType
         });
 
         // Update acceptor stats
         await updateSingleUserStats(acceptorId, {
             total_wagered: wagerAmount,
-            total_won: acceptorWon ? wagerAmount : 0,
-            total_lost: acceptorWon ? 0 : wagerAmount,
-            won: acceptorWon,
+            won: winnerId && winnerPosition ? acceptorWon : null, // null for draws  
+            is_draw: !winnerId || !winnerPosition,
             wager_type: wagerType
         });
 
@@ -2895,7 +2893,7 @@ async function updateSingleUserStats(userId, stats) {
         // Get current user stats
         const { data: currentUser, error: fetchError } = await supabase
             .from('users')
-            .select('total_wagered, total_won, total_lost, win_rate, streak_count')
+            .select('total_wagered, wins, losses, total_wagers, profit_amount, win_streak, loss_streak')
             .eq('id', userId)
             .single();
 
@@ -2907,29 +2905,46 @@ async function updateSingleUserStats(userId, stats) {
         // Calculate new stats
         const newStats = {
             total_wagered: (currentUser.total_wagered || 0) + stats.total_wagered,
-            total_won: (currentUser.total_won || 0) + stats.total_won,
-            total_lost: (currentUser.total_lost || 0) + stats.total_lost,
             updated_at: new Date().toISOString()
         };
 
-        // Only update win rate and streak if this is a win/loss scenario
-        if (stats.won !== null) {
-            // Calculate win rate based on total_won vs total_lost
-            const totalWagers = (newStats.total_won + newStats.total_lost);
-            newStats.win_rate = totalWagers > 0 ? (newStats.total_won / totalWagers) * 100 : 0;
-
-            // Calculate streak
-            if (stats.won) {
-                // User won - increment streak
-                newStats.streak_count = (currentUser.streak_count || 0) + 1;
-            } else {
-                // User lost - reset streak to 0
-                newStats.streak_count = 0;
-            }
+        // Handle win/loss/draw scenarios
+        if (stats.won === true) {
+            // User won this wager
+            newStats.wins = (currentUser.wins || 0) + 1;
+            newStats.losses = currentUser.losses || 0; // No change
+            newStats.total_wagers = (currentUser.total_wagers || 0) + 1;
+            newStats.profit_amount = (currentUser.profit_amount || 0) + stats.total_wagered; // Profit the wager amount
+            newStats.win_streak = (currentUser.win_streak || 0) + 1;
+            newStats.loss_streak = 0; // Reset loss streak
+        } else if (stats.won === false) {
+            // User lost this wager
+            newStats.wins = currentUser.wins || 0; // No change
+            newStats.losses = (currentUser.losses || 0) + 1;
+            newStats.total_wagers = (currentUser.total_wagers || 0) + 1;
+            newStats.profit_amount = (currentUser.profit_amount || 0) - stats.total_wagered; // Lose the wager amount
+            newStats.win_streak = 0; // Reset win streak
+            newStats.loss_streak = (currentUser.loss_streak || 0) + 1;
         } else {
-            // This is just a wager acceptance, preserve existing win rate and streak
-            newStats.win_rate = currentUser.win_rate || 0;
-            newStats.streak_count = currentUser.streak_count || 0;
+            // This is either a draw/refund or just wager acceptance
+            // For draws, increment total_wagers but no win/loss changes
+            // For acceptance, just update total_wagered
+            if (stats.is_draw) {
+                newStats.wins = currentUser.wins || 0;
+                newStats.losses = currentUser.losses || 0;
+                newStats.total_wagers = (currentUser.total_wagers || 0) + 1;
+                newStats.profit_amount = currentUser.profit_amount || 0; // No profit change on draw
+                newStats.win_streak = currentUser.win_streak || 0;
+                newStats.loss_streak = currentUser.loss_streak || 0;
+            } else {
+                // Just acceptance - preserve all existing stats except total_wagered
+                newStats.wins = currentUser.wins || 0;
+                newStats.losses = currentUser.losses || 0;
+                newStats.total_wagers = currentUser.total_wagers || 0;
+                newStats.profit_amount = currentUser.profit_amount || 0;
+                newStats.win_streak = currentUser.win_streak || 0;
+                newStats.loss_streak = currentUser.loss_streak || 0;
+            }
         }
 
         // Update user stats in database
@@ -2942,11 +2957,13 @@ async function updateSingleUserStats(userId, stats) {
             console.error(`❌ Error updating stats for user ${userId}:`, updateError);
         } else {
             console.log(`✅ Updated stats for user ${userId}:`, {
+                wins: newStats.wins,
+                losses: newStats.losses,
+                total_wagers: newStats.total_wagers,
                 total_wagered: newStats.total_wagered,
-                total_won: newStats.total_won,
-                total_lost: newStats.total_lost,
-                win_rate: newStats.win_rate.toFixed(2) + '%',
-                streak_count: newStats.streak_count
+                profit_amount: newStats.profit_amount,
+                win_streak: newStats.win_streak,
+                loss_streak: newStats.loss_streak
             });
         }
 
@@ -2962,21 +2979,19 @@ async function updateWagerAcceptanceStats(creatorId, acceptorId, wagerAmount, wa
         console.log(`   Creator (${creatorId}): wagered ${wagerAmount} SOL`);
         console.log(`   Acceptor (${acceptorId}): wagered ${wagerAmount} SOL`);
 
-        // Update creator stats - increment total_wagered
+        // Update creator stats - increment total_wagered only
         await updateSingleUserStats(creatorId, {
             total_wagered: wagerAmount,
-            total_won: 0,
-            total_lost: 0,
-            won: null, // Not a win/loss, just a wager
+            won: null, // Not a win/loss, just acceptance
+            is_draw: false, // Not a draw, just acceptance
             wager_type: wagerType
         });
 
-        // Update acceptor stats - increment total_wagered
+        // Update acceptor stats - increment total_wagered only
         await updateSingleUserStats(acceptorId, {
             total_wagered: wagerAmount,
-            total_won: 0,
-            total_lost: 0,
-            won: null, // Not a win/loss, just a wager
+            won: null, // Not a win/loss, just acceptance
+            is_draw: false, // Not a draw, just acceptance
             wager_type: wagerType
         });
 
