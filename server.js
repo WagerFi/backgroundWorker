@@ -770,6 +770,49 @@ app.post('/cancel-wager', async (req, res) => {
             return res.status(500).json({ error: 'Failed to update database' });
         }
 
+        // Process the actual Solana refund from escrow
+        console.log(`💰 Processing Solana refund for cancelled wager ${wager_id}...`);
+
+        try {
+            // Get the full wager data including escrow_pda
+            const { data: fullWagerData, error: fullWagerError } = await supabase
+                .from(tableName)
+                .select('*')
+                .eq('id', wager.id)
+                .single();
+
+            if (fullWagerError || !fullWagerData) {
+                console.error(`❌ Error fetching full wager data for refund:`, fullWagerError);
+                // Continue with cancellation even if refund fails
+            } else {
+                // Process the on-chain refund
+                const refundResult = await processWagerRefundOnChain(fullWagerData);
+
+                if (refundResult.success) {
+                    console.log(`✅ Solana refund successful for wager ${wager_id}:`, refundResult.signature);
+
+                    // Update wager with refund signature
+                    await supabase
+                        .from(tableName)
+                        .update({
+                            metadata: {
+                                ...updatedMetadata,
+                                refund_signature: refundResult.signature,
+                                refund_processed_at: new Date().toISOString()
+                            }
+                        })
+                        .eq('id', wager.id);
+
+                } else {
+                    console.error(`❌ Solana refund failed for wager ${wager_id}:`, refundResult.error);
+                    // Continue with cancellation even if refund fails
+                }
+            }
+        } catch (refundError) {
+            console.error(`❌ Error processing refund for wager ${wager_id}:`, refundError);
+            // Continue with cancellation even if refund fails
+        }
+
         // Create notification for creator
         await createNotification(wager.creator_id, 'wager_cancelled',
             'Wager Cancelled!',
@@ -782,7 +825,7 @@ app.post('/cancel-wager', async (req, res) => {
             wager_id,
             wager_type,
             status: 'cancelled',
-            message: 'Wager cancelled successfully. Refund will be processed by background worker.'
+            message: 'Wager cancelled successfully. Refund has been processed from escrow.'
         });
 
     } catch (error) {
@@ -2237,7 +2280,8 @@ async function processWagerRefundOnChain(wager) {
         console.log(`🔗 Executing on-chain refund for wager ${wager.wager_id}`);
 
         // For refunds: NO platform fee, but network fee is paid from refund
-        const refundAmount = wager.amount; // Full amount to refund
+        // Handle both amount and sol_amount fields for compatibility
+        const refundAmount = wager.sol_amount || wager.amount; // Full amount to refund
         const networkFee = SOLANA_TRANSACTION_FEE; // Solana transaction fee
         const actualRefund = refundAmount - networkFee; // User gets amount minus network fee
 
@@ -2256,6 +2300,16 @@ async function processWagerRefundOnChain(wager) {
 
         // Execute actual Solana escrow withdrawal
         try {
+            // Enhanced validation and logging
+            console.log(`🔍 Validating wager data for refund:`, {
+                wager_id: wager.wager_id,
+                escrow_pda: wager.escrow_pda,
+                creator_address: wager.creator_address,
+                sol_amount: wager.sol_amount,
+                amount: wager.amount,
+                refundAmount: refundAmount
+            });
+
             // Validate that escrow_pda is a valid Solana public key
             if (!wager.escrow_pda || typeof wager.escrow_pda !== 'string') {
                 throw new Error(`Invalid escrow_pda: ${wager.escrow_pda}`);
