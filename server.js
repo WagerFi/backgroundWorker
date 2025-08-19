@@ -121,18 +121,34 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 break;
 
             case 'handleExpiredWager':
-                // Use the existing PDA from the database instead of creating new ones
-                // This prevents account creation that requires rent from authority wallet
-                const expiredWagerPDA = new PublicKey(accounts.wagerId);
-                const expiredEscrowPDA = new PublicKey(accounts.escrowPda || accounts.wagerId);
+                // CRITICAL FIX: We need to derive the correct PDAs from the wager ID
+                // The database escrow_pda might be wrong, so we derive it correctly
+                const wagerIdBytes = Buffer.from(accounts.wagerId, 'utf8');
+
+                // Derive the correct wager PDA
+                const [correctWagerPDA] = PublicKey.findProgramAddressSync(
+                    [Buffer.from('wager'), wagerIdBytes],
+                    WAGERFI_PROGRAM_ID
+                );
+
+                // Derive the correct escrow PDA
+                const [correctEscrowPDA] = PublicKey.findProgramAddressSync(
+                    [Buffer.from('escrow'), wagerIdBytes],
+                    WAGERFI_PROGRAM_ID
+                );
+
+                console.log(`🔍 Derived PDAs from wager ID: ${accounts.wagerId}`);
+                console.log(`🔍 Correct wager PDA: ${correctWagerPDA.toString()}`);
+                console.log(`🔍 Correct escrow PDA: ${correctEscrowPDA.toString()}`);
+                console.log(`🔍 Database escrow PDA: ${accounts.escrowPda || 'not provided'}`);
 
                 // Verify accounts exist before proceeding
                 try {
-                    const wagerAccount = await anchorProgram.account.wager.fetch(expiredWagerPDA);
-                    const escrowBalance = await anchorProgram.provider.connection.getBalance(expiredEscrowPDA);
+                    const wagerAccount = await anchorProgram.account.wager.fetch(correctWagerPDA);
+                    const escrowBalance = await anchorProgram.provider.connection.getBalance(correctEscrowPDA);
 
-                    console.log(`✅ Wager account verified: ${expiredWagerPDA.toString()}`);
-                    console.log(`✅ Escrow account verified: ${expiredEscrowPDA.toString()}`);
+                    console.log(`✅ Wager account verified: ${correctWagerPDA.toString()}`);
+                    console.log(`✅ Escrow account verified: ${correctEscrowPDA.toString()}`);
                     console.log(`✅ Escrow balance: ${escrowBalance / LAMPORTS_PER_SOL} SOL`);
 
                     if (escrowBalance === 0) {
@@ -146,8 +162,8 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 result = await anchorProgram.methods
                     .handleExpiredWager()
                     .accounts({
-                        wager: expiredWagerPDA,
-                        escrow: expiredEscrowPDA,
+                        wager: correctWagerPDA,
+                        escrow: correctEscrowPDA,
                         creator: new PublicKey(accounts.creatorPubkey),
                         authority: authorityKeypair.publicKey,
                     })
@@ -217,6 +233,35 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
     } catch (error) {
         console.error(`❌ Error executing ${instructionName}:`, error);
         throw error;
+    }
+}
+
+// Helper function to create notifications
+async function createNotification(userId, type, title, message, data = {}) {
+    try {
+        if (!userId) {
+            console.log('⚠️ Skipping notification - no user ID provided');
+            return;
+        }
+
+        const { error } = await supabase
+            .from('notifications')
+            .insert({
+                user_id: userId,
+                type: type,
+                title: title,
+                message: message,
+                data: data,
+                is_read: false
+            });
+
+        if (error) {
+            console.error('❌ Error creating notification:', error);
+        } else {
+            console.log(`✅ Notification created for user ${userId}: ${type}`);
+        }
+    } catch (error) {
+        console.error('❌ Error in createNotification:', error);
     }
 }
 
