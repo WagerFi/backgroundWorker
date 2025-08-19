@@ -103,13 +103,16 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
 
         switch (instructionName) {
             case 'resolveWager':
-                // Use the escrow PDA from database as the wager account (same as cancellation/refunds)
-                console.log(`🔍 Using escrow PDA as wager account: ${accounts.escrowPda}`);
-                const resolveWagerPDA = new PublicKey(accounts.escrowPda);
+                // Derive the correct wager PDA and use escrow PDA from database
+                console.log(`🔍 Deriving correct PDAs for resolveWager`);
+                const resolveWagerPDA = PublicKey.findProgramAddressSync(
+                    [Buffer.from("wager"), Buffer.from(accounts.wagerId)],
+                    PROGRAM_ID
+                )[0];
                 const resolveEscrowPDA = new PublicKey(accounts.escrowPda);
 
-                console.log(`🔍 Wager account (from escrow_pda): ${resolveWagerPDA.toString()}`);
-                console.log(`🔍 Escrow account (same): ${resolveEscrowPDA.toString()}`);
+                console.log(`🔍 Wager account (derived): ${resolveWagerPDA.toString()}`);
+                console.log(`🔍 Escrow account (from DB): ${resolveEscrowPDA.toString()}`);
 
                 result = await anchorProgram.methods
                     .resolveWager({ [args.winner.toLowerCase()]: {} })
@@ -1370,6 +1373,7 @@ async function resolveSportsWagerOnChain(wagerId, winnerPosition, creatorId, acc
             // Execute the resolveWager instruction
             const transaction = await executeProgramInstruction('resolveWager', {
                 wagerId: wagerData.wager_id,
+                escrowPda: wagerData.escrow_pda,
                 winnerPubkey: winnerWallet.toString()
             }, { winner: winnerPosition });
 
