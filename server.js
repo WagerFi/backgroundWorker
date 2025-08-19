@@ -123,9 +123,6 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
             case 'handleExpiredWager':
                 // Use the PDAs stored in the database to avoid creating new accounts
                 // The database PDAs are the actual Solana accounts that exist
-
-                // Use the PDAs stored in the database to avoid creating new accounts
-                // The database PDAs are the actual Solana accounts that exist
                 const databaseWagerPDA = new PublicKey(accounts.wagerId);
                 const databaseEscrowPDA = new PublicKey(accounts.escrowPda);
 
@@ -612,12 +609,20 @@ app.post('/resolve-sports-wager', async (req, res) => {
     }
 });
 
+// Test endpoint to verify server is working
+app.get('/test', (req, res) => {
+    res.json({ message: 'Background worker is running!', timestamp: new Date().toISOString() });
+});
+
 // 3. Cancel Wager (Database Status Update + Background Refund)
 app.post('/cancel-wager', async (req, res) => {
     try {
         const { wager_id, wager_type, cancelling_address } = req.body;
 
+        console.log(`🔄 Cancel wager request received:`, { wager_id, wager_type, cancelling_address });
+
         if (!wager_id || !wager_type || !cancelling_address) {
+            console.error(`❌ Missing required fields:`, { wager_id, wager_type, cancelling_address });
             return res.status(400).json({ error: 'wager_id, wager_type, and cancelling_address are required' });
         }
 
@@ -650,25 +655,49 @@ app.post('/cancel-wager', async (req, res) => {
                 creator_id: allWagers[0].creator_id,
                 creator_address: allWagers[0].creator_address
             });
+
+            // Log all wagers to see what we have
+            allWagers.forEach((w, index) => {
+                console.log(`🔍 Wager ${index}:`, {
+                    id: w.id,
+                    wager_id: w.wager_id,
+                    status: w.status,
+                    creator_id: w.creator_id,
+                    creator_address: w.creator_address
+                });
+            });
         }
 
         // Now try to get the specific wager with 'open' status
-        const { data: wager, error: fetchError } = await supabase
+        console.log(`🔍 Querying for open wager with wager_id: ${wager_id} and status: 'open'`);
+
+        const { data: wagers, error: fetchError } = await supabase
             .from(tableName)
             .select('*')
             .eq('wager_id', wager_id)
-            .eq('status', 'open')
-            .single();
+            .eq('status', 'open');
+
+        console.log(`🔍 Query result:`, { wagers, fetchError });
 
         if (fetchError) {
             console.error(`❌ Error fetching open wager ${wager_id}:`, fetchError);
-            return res.status(404).json({ error: `Wager not found or not open: ${fetchError.message}` });
+            return res.status(500).json({ error: `Database query failed: ${fetchError.message}` });
         }
 
-        if (!wager) {
+        if (!wagers || wagers.length === 0) {
             console.error(`❌ No open wager found with ID ${wager_id}`);
             return res.status(404).json({ error: 'Wager not found or not open' });
         }
+
+        // Get the first open wager (should only be one anyway)
+        const wager = wagers[0];
+        console.log(`🔍 Selected wager for cancellation:`, {
+            id: wager.id,
+            wager_id: wager.wager_id,
+            status: wager.status,
+            creator_id: wager.creator_id,
+            creator_address: wager.creator_address
+        });
 
         // Check if user has permission to cancel
         let hasPermission = false;
@@ -1530,7 +1559,7 @@ async function handleExpiredWagerOnChain(wagerId, creatorId, amount) {
 
             // Execute the handleExpiredWager instruction
             const transaction = await executeProgramInstruction('handleExpiredWager', {
-                wagerId: wagerData.wager_id, // Use the actual wager ID for PDA derivation
+                wagerId: wagerData.escrow_pda, // Use escrow_pda as the wager account PDA
                 escrowPda: wagerData.escrow_pda, // Pass the escrow PDA for verification
                 creatorPubkey: creatorWallet.toString()
             });
@@ -2190,9 +2219,26 @@ async function processWagerRefundOnChain(wager) {
         console.log(`   Network fee: ${networkFee} SOL`);
         console.log(`   User receives: ${actualRefund} SOL`);
         console.log(`   Escrow PDA: ${wager.escrow_pda}`);
+        console.log(`🔍 Wager data for debugging:`, {
+            id: wager.id,
+            wager_id: wager.wager_id,
+            escrow_pda: wager.escrow_pda,
+            creator_address: wager.creator_address,
+            status: wager.status
+        });
 
         // Execute actual Solana escrow withdrawal
         try {
+            // Validate that escrow_pda is a valid Solana public key
+            if (!wager.escrow_pda || typeof wager.escrow_pda !== 'string') {
+                throw new Error(`Invalid escrow_pda: ${wager.escrow_pda}`);
+            }
+
+            // Check if escrow_pda looks like a valid Solana public key (base58, 32-44 characters)
+            if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(wager.escrow_pda)) {
+                throw new Error(`escrow_pda is not a valid Solana public key format: ${wager.escrow_pda}`);
+            }
+
             const escrowAccount = new PublicKey(wager.escrow_pda);
             const userWallet = new PublicKey(wager.creator_address);
 
@@ -2202,9 +2248,9 @@ async function processWagerRefundOnChain(wager) {
             console.log(`   Authority: ${authorityKeypair.publicKey.toString()}`);
 
             // Execute the handleExpiredWager instruction to refund the creator
-            // Use the actual PDAs stored in the database to avoid creation of new accounts
+            // Pass the actual PDAs from the database to avoid PublicKey creation errors
             const signature = await executeProgramInstruction('handleExpiredWager', {
-                wagerId: wager.wager_id, // Use the actual wager ID for PDA derivation
+                wagerId: wager.escrow_pda, // Use escrow_pda as the wager account PDA
                 escrowPda: wager.escrow_pda, // Pass the escrow PDA for verification
                 creatorPubkey: userWallet.toString()
             });
