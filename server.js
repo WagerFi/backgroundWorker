@@ -524,18 +524,22 @@ app.post('/resolve-sports-wager', async (req, res) => {
             return res.status(500).json({ error: 'Failed to update database' });
         }
 
-        // Create notifications
-        if (isDraw) {
-            await createNotification(wager.creator_id, 'wager_resolved',
-                'Wager Draw!',
-                `Your sports wager on ${wager.team1} vs ${wager.team2} ended in a draw. You've been refunded ${wager.amount} SOL.`);
-            await createNotification(wager.acceptor_id, 'wager_resolved',
-                'Wager Draw!',
-                `Your sports wager on ${wager.team1} vs ${wager.team2} ended in a draw. You've been refunded ${wager.amount} SOL.`);
+        // Create notifications using the new database function
+        const winnerWalletAddress = winnerPosition === 'creator' ? wager.creator_address : wager.acceptor_address;
+        const loserWalletAddress = winnerPosition === 'creator' ? wager.acceptor_address : wager.creator_address;
+
+        const notificationResult = await supabase.rpc('create_wager_resolved_notification', {
+            p_winner_address: winnerWalletAddress,
+            p_loser_address: loserWalletAddress,
+            p_wager_type: 'sports',
+            p_wager_amount: wager.amount || wager.sol_amount,
+            p_is_draw: isDraw
+        });
+
+        if (notificationResult.error) {
+            console.error('❌ Error creating wager resolution notification:', notificationResult.error);
         } else {
-            await createNotification(winnerId, 'wager_resolved',
-                'Wager Resolved!',
-                `Your sports wager on ${wager.team1} vs ${wager.team2} has been resolved. You won ${wager.amount} SOL!`);
+            console.log('✅ Created wager resolution notification');
         }
 
         // Update user stats
@@ -944,14 +948,19 @@ app.post('/accept-wager', async (req, res) => {
         // Update stats for both users - both have now wagered the amount
         await updateWagerAcceptanceStats(wager.creator_id, acceptor_id, wager.amount || wager.sol_amount, wager_type);
 
-        // Create notifications
-        await createNotification(wager.creator_id, 'wager_accepted',
-            'Wager Accepted!',
-            `Your ${wager_type} wager has been accepted! The wager is now active.`);
+        // Create notifications using the new database function
+        const notificationResult = await supabase.rpc('create_wager_accepted_notification', {
+            p_creator_address: wager.creator_address,
+            p_acceptor_address: acceptorUser.wallet_address,
+            p_wager_type: wager_type,
+            p_wager_amount: wager.amount || wager.sol_amount
+        });
 
-        await createNotification(acceptor_id, 'wager_accepted',
-            'Wager Accepted!',
-            `You've accepted a ${wager_type} wager! The wager is now active.`);
+        if (notificationResult.error) {
+            console.error('❌ Error creating wager acceptance notifications:', notificationResult.error);
+        } else {
+            console.log('✅ Created wager acceptance notifications for both users');
+        }
 
         console.log(`✅ Accepted ${wager_type} wager ${wager_id}`);
 
@@ -1755,10 +1764,23 @@ async function resolveExpiredMatchedWager(wager) {
             if (updateError) {
                 console.error(`❌ Error updating wager ${wager.wager_id}:`, updateError);
             } else {
-                // Create notification for winner
-                await createNotification(winnerId, 'wager_resolved',
-                    'Wager Resolved!',
-                    `Your crypto wager on ${wager.token_symbol} has been resolved. You won ${wager.amount} SOL!`);
+                // Create notification for winner using the new database function
+                const winnerWalletAddress = winnerPosition === 'creator' ? wager.creator_address : wager.acceptor_address;
+                const loserWalletAddress = winnerPosition === 'creator' ? wager.acceptor_address : wager.creator_address;
+
+                const notificationResult = await supabase.rpc('create_wager_resolved_notification', {
+                    p_winner_address: winnerWalletAddress,
+                    p_loser_address: loserWalletAddress,
+                    p_wager_type: 'crypto',
+                    p_wager_amount: wager.amount || wager.sol_amount,
+                    p_is_draw: false
+                });
+
+                if (notificationResult.error) {
+                    console.error('❌ Error creating wager resolution notification:', notificationResult.error);
+                } else {
+                    console.log('✅ Created wager resolution notification for winner');
+                }
 
                 // Update stats for both users involved in the wager
                 await updateWagerUserStats(wager, winnerId, winnerPosition, 'crypto');
@@ -2424,49 +2446,8 @@ async function getSportsGameResult(sport, team1, team2) {
     }
 }
 
-// Create notification
-async function createNotification(userId, type, title, message) {
-    try {
-        // Get user's wallet address for the notification
-        const { data: user, error: userError } = await supabase
-            .from('users')
-            .select('wallet_address')
-            .eq('id', userId)
-            .single();
-
-        if (userError || !user?.wallet_address) {
-            console.error(`❌ Error fetching wallet address for user ${userId}:`, userError);
-            return;
-        }
-
-        const { error } = await supabase
-            .from('notifications')
-            .insert({
-                user_id: userId,
-                user_address: user.wallet_address,
-                type: type,
-                title: title,
-                message: message
-            });
-
-        if (error) {
-            console.error('❌ Error creating notification:', error);
-            console.error('   Details:', {
-                user_id: userId,
-                user_address: user.wallet_address,
-                type: type,
-                title: title,
-                message: message
-            });
-        } else {
-            console.log(`✅ Created notification for user ${userId} (${user.wallet_address}): ${type}`);
-            console.log(`   Title: ${title}`);
-            console.log(`   Message: ${message}`);
-        }
-    } catch (error) {
-        console.error('❌ Error creating notification:', error);
-    }
-}
+// Create notification function is now replaced by database functions
+// Use supabase.rpc('create_notification', {...}) instead
 
 // Update user stats for both users involved in a wager
 async function updateWagerUserStats(wager, winnerId, winnerPosition, wagerType = 'crypto') {
@@ -3145,7 +3126,7 @@ app.listen(PORT, () => {
         }
     })();
 
-    // Test notification creation on startup
+    // Test notification creation on startup using new database function
     console.log('🧪 Testing notification system...');
     (async () => {
         try {
@@ -3162,8 +3143,18 @@ app.listen(PORT, () => {
             }
 
             console.log(`🧪 Testing notification for user: ${testUser.id} (${testUser.wallet_address})`);
-            await createNotification(testUser.id, 'system', 'Test Notification', 'Background worker is running and notifications are working!');
-            console.log('✅ Notification test completed');
+            const testResult = await supabase.rpc('create_notification', {
+                p_user_address: testUser.wallet_address,
+                p_type: 'system',
+                p_title: 'Test Notification',
+                p_message: 'Background worker is running and notifications are working!'
+            });
+
+            if (testResult.error) {
+                console.error('❌ Notification test failed:', testResult.error);
+            } else {
+                console.log('✅ Notification test completed');
+            }
         } catch (error) {
             console.error('❌ Notification test failed:', error);
         }
