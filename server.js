@@ -798,6 +798,9 @@ app.post('/cancel-wager', async (req, res) => {
 
                 if (refundResult.success) {
                     console.log(`✅ Solana refund successful for wager ${wager_id}:`, refundResult.signature);
+                    if (refundResult.blockchainConfirmation) {
+                        console.log(`✅ Blockchain confirmation:`, refundResult.blockchainConfirmation);
+                    }
 
                     // Update wager with refund signature
                     await supabase
@@ -2411,8 +2414,73 @@ async function processWagerRefundOnChain(wager) {
                 logs: onChainError.transactionLogs || onChainError.logs
             });
 
-            // Check if it's a rent issue
+            // Check if it's a rent issue but the refund actually succeeded
             if (onChainError.message && onChainError.message.includes('insufficient funds for rent')) {
+                // Check if the transaction logs show successful refund
+                const transactionLogs = onChainError.transactionLogs || onChainError.logs || [];
+                const refundSuccessful = transactionLogs.some(log =>
+                    log.includes('cancelled. Refunded') && log.includes('lamports to creator')
+                );
+
+                if (refundSuccessful) {
+                    console.log(`⚠️ PROGRAM LOGS SHOW SUCCESS, BUT VERIFYING ACTUAL SOL TRANSFER...`);
+                    console.log(`⚠️ Program log: ${transactionLogs.find(log => log.includes('cancelled. Refunded'))}`);
+
+                    // CRITICAL: Check if SOL actually moved by examining account balances
+                    try {
+                        const userBalanceAfter = await anchorProgram.provider.connection.getBalance(userWallet);
+                        const escrowBalanceAfter = await anchorProgram.provider.connection.getBalance(escrowAccount);
+
+                        console.log(`🔍 POST-TRANSACTION VERIFICATION:`);
+                        console.log(`   User balance after: ${userBalanceAfter / LAMPORTS_PER_SOL} SOL`);
+                        console.log(`   Escrow balance after: ${escrowBalanceAfter / LAMPORTS_PER_SOL} SOL`);
+
+                        // Check if escrow account was actually closed (balance = 0)
+                        if (escrowBalanceAfter === 0) {
+                            console.log(`✅ CONFIRMED: Escrow account closed (balance = 0)`);
+                            console.log(`✅ This means SOL was actually transferred out!`);
+
+                            return {
+                                success: true,
+                                signature: onChainError.signature || 'blockchain_confirmed_refund',
+                                refundBreakdown: {
+                                    originalAmount: refundAmount,
+                                    networkFee: networkFee,
+                                    actualRefund: actualRefund
+                                },
+                                note: 'Refund verified: Escrow account closed, SOL transferred to user.',
+                                verification: {
+                                    escrowClosed: true,
+                                    userBalanceAfter: userBalanceAfter / LAMPORTS_PER_SOL
+                                }
+                            };
+                        } else {
+                            console.error(`❌ ESCROW STILL HAS BALANCE: ${escrowBalanceAfter / LAMPORTS_PER_SOL} SOL`);
+                            console.error(`❌ This suggests the refund did NOT actually succeed!`);
+
+                            return {
+                                success: false,
+                                error: 'Refund verification failed: Escrow account not closed',
+                                details: `Program logs claimed success but escrow still has ${escrowBalanceAfter / LAMPORTS_PER_SOL} SOL`,
+                                verification: {
+                                    escrowClosed: false,
+                                    escrowBalanceRemaining: escrowBalanceAfter / LAMPORTS_PER_SOL
+                                }
+                            };
+                        }
+                    } catch (verificationError) {
+                        console.error(`❌ Could not verify refund success:`, verificationError);
+
+                        // If we can't verify, treat as uncertain
+                        return {
+                            success: false,
+                            error: 'Unable to verify refund completion',
+                            details: 'Program logs suggest success but account verification failed',
+                            programLogs: transactionLogs
+                        };
+                    }
+                }
+
                 console.error(`🚨 RENT ISSUE DETECTED!`);
                 console.error(`🚨 This suggests one of the accounts lacks rent exemption, not transaction fees`);
                 console.error(`🚨 Authority wallet (has 2.35 SOL): ${authorityKeypair.publicKey.toString()}`);
@@ -2420,10 +2488,9 @@ async function processWagerRefundOnChain(wager) {
 
                 return {
                     success: false,
-                    error: 'Network transaction fees not covered. This is a Solana blockchain limitation.',
-                    details: 'The refund executed successfully on-chain, but transaction confirmation failed due to network fee requirements. Consider implementing user-signed transactions.',
-                    authorityWallet: authorityKeypair.publicKey.toString(),
-                    recommendedSolution: 'Implement user-signed cancellation transactions or fund authority wallet with ~0.1 SOL'
+                    error: 'Account rent requirements not met.',
+                    details: 'Transaction failed due to insufficient rent exemption for one of the accounts.',
+                    authorityWallet: authorityKeypair.publicKey.toString()
                 };
             }
 
