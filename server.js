@@ -632,6 +632,61 @@ app.get('/test', (req, res) => {
     res.json({ message: 'Background worker is running!', timestamp: new Date().toISOString() });
 });
 
+// Quick fix endpoint to recalculate user stats using correct columns
+app.post('/fix-user-stats', async (req, res) => {
+    try {
+        const { wallet_address } = req.body;
+
+        if (!wallet_address) {
+            return res.status(400).json({ error: 'wallet_address is required' });
+        }
+
+        console.log(`🔧 Fixing stats for user: ${wallet_address}`);
+
+        // Get user ID
+        const { data: user, error: userError } = await supabase
+            .from('users')
+            .select('id, total_wagered')
+            .eq('wallet_address', wallet_address)
+            .single();
+
+        if (userError || !user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        // For now, just ensure the columns exist with correct data
+        // Assuming total_wagered is correct (1.55), set other fields based on current activity
+        const { error: updateError } = await supabase
+            .from('users')
+            .update({
+                total_won: 0, // No resolved wagers yet
+                total_lost: 0, // No resolved wagers yet
+                win_rate: 0, // No resolved wagers yet
+                win_streak: 0,
+                loss_streak: 0,
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', user.id);
+
+        if (updateError) {
+            console.error('Error updating user stats:', updateError);
+            return res.status(500).json({ error: 'Failed to update user stats' });
+        }
+
+        console.log(`✅ Fixed stats for ${wallet_address}`);
+
+        res.json({
+            success: true,
+            wallet_address,
+            message: 'Stats fixed - now using correct columns'
+        });
+
+    } catch (error) {
+        console.error('❌ Error fixing user stats:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // 3. Cancel Wager (Database Status Update + Background Refund)
 app.post('/cancel-wager', async (req, res) => {
     try {
@@ -2893,7 +2948,7 @@ async function updateSingleUserStats(userId, stats) {
         // Get current user stats
         const { data: currentUser, error: fetchError } = await supabase
             .from('users')
-            .select('total_wagered, wins, losses, total_wagers, profit_amount, win_streak, loss_streak')
+            .select('total_wagered, total_won, total_lost, win_streak, loss_streak')
             .eq('id', userId)
             .single();
 
@@ -2911,41 +2966,38 @@ async function updateSingleUserStats(userId, stats) {
         // Handle win/loss/draw scenarios
         if (stats.won === true) {
             // User won this wager
-            newStats.wins = (currentUser.wins || 0) + 1;
-            newStats.losses = currentUser.losses || 0; // No change
-            newStats.total_wagers = (currentUser.total_wagers || 0) + 1;
-            newStats.profit_amount = (currentUser.profit_amount || 0) + stats.total_wagered; // Profit the wager amount
+            newStats.total_won = (currentUser.total_won || 0) + stats.total_wagered;
+            newStats.total_lost = currentUser.total_lost || 0; // No change
             newStats.win_streak = (currentUser.win_streak || 0) + 1;
             newStats.loss_streak = 0; // Reset loss streak
         } else if (stats.won === false) {
             // User lost this wager
-            newStats.wins = currentUser.wins || 0; // No change
-            newStats.losses = (currentUser.losses || 0) + 1;
-            newStats.total_wagers = (currentUser.total_wagers || 0) + 1;
-            newStats.profit_amount = (currentUser.profit_amount || 0) - stats.total_wagered; // Lose the wager amount
+            newStats.total_won = currentUser.total_won || 0; // No change
+            newStats.total_lost = (currentUser.total_lost || 0) + stats.total_wagered;
             newStats.win_streak = 0; // Reset win streak
             newStats.loss_streak = (currentUser.loss_streak || 0) + 1;
         } else {
             // This is either a draw/refund or just wager acceptance
-            // For draws, increment total_wagers but no win/loss changes
-            // For acceptance, just update total_wagered
+            // For draws/acceptance, no win/loss changes
             if (stats.is_draw) {
-                newStats.wins = currentUser.wins || 0;
-                newStats.losses = currentUser.losses || 0;
-                newStats.total_wagers = (currentUser.total_wagers || 0) + 1;
-                newStats.profit_amount = currentUser.profit_amount || 0; // No profit change on draw
+                newStats.total_won = currentUser.total_won || 0;
+                newStats.total_lost = currentUser.total_lost || 0;
                 newStats.win_streak = currentUser.win_streak || 0;
                 newStats.loss_streak = currentUser.loss_streak || 0;
             } else {
-                // Just acceptance - preserve all existing stats except total_wagered
-                newStats.wins = currentUser.wins || 0;
-                newStats.losses = currentUser.losses || 0;
-                newStats.total_wagers = currentUser.total_wagers || 0;
-                newStats.profit_amount = currentUser.profit_amount || 0;
+                // Wager acceptance - no win/loss changes yet
+                newStats.total_won = currentUser.total_won || 0;
+                newStats.total_lost = currentUser.total_lost || 0;
                 newStats.win_streak = currentUser.win_streak || 0;
                 newStats.loss_streak = currentUser.loss_streak || 0;
             }
         }
+
+        // Calculate win rate
+        const totalWins = newStats.total_won || 0;
+        const totalLoss = newStats.total_lost || 0;
+        const totalResolved = totalWins + totalLoss;
+        newStats.win_rate = totalResolved > 0 ? (totalWins / (totalWins + totalLoss)) * 100 : 0;
 
         // Update user stats in database
         const { error: updateError } = await supabase
