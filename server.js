@@ -103,9 +103,16 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
 
         switch (instructionName) {
             case 'resolveWager':
-                // Use existing PDAs to prevent account creation requiring rent
-                const resolveWagerPDA = new PublicKey(accounts.wagerId);
-                const resolveEscrowPDA = new PublicKey(accounts.escrowPda || accounts.wagerId);
+                // Derive correct wager PDA from the string wager_id
+                console.log(`🔍 Deriving wager PDA from wager_id: ${accounts.wagerId}`);
+                const [resolveWagerPDA] = PublicKey.findProgramAddressSync(
+                    [Buffer.from(accounts.wagerId)],
+                    new PublicKey(WAGERFI_PROGRAM_ID)
+                );
+                const resolveEscrowPDA = new PublicKey(accounts.escrowPda);
+
+                console.log(`🔍 Derived wager PDA: ${resolveWagerPDA.toString()}`);
+                console.log(`🔍 Escrow PDA from database: ${resolveEscrowPDA.toString()}`);
 
                 result = await anchorProgram.methods
                     .resolveWager({ [args.winner.toLowerCase()]: {} })
@@ -1271,6 +1278,7 @@ async function resolveCryptoWagerOnChain(wagerId, winnerPosition, creatorId, acc
             // Execute the resolveWager instruction
             const transaction = await executeProgramInstruction('resolveWager', {
                 wagerId: wagerData.wager_id,
+                escrowPda: wagerData.escrow_pda,
                 winnerPubkey: winnerWallet.toString()
             }, { winner: winnerPosition });
 
@@ -2428,6 +2436,9 @@ async function processWagerRefundOnChain(wager) {
 
                     // CRITICAL: Check if SOL actually moved by examining account balances
                     try {
+                        const userWallet = new PublicKey(wager.creator_address);
+                        const escrowAccount = new PublicKey(wager.escrow_pda);
+
                         const userBalanceAfter = await anchorProgram.provider.connection.getBalance(userWallet);
                         const escrowBalanceAfter = await anchorProgram.provider.connection.getBalance(escrowAccount);
 
