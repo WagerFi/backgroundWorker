@@ -121,26 +121,34 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 break;
 
             case 'handleExpiredWager':
-                // Use the PDAs stored in the database to avoid creating new accounts
-                // The database PDAs are the actual Solana accounts that exist
-                const databaseWagerPDA = new PublicKey(accounts.wagerId);
-                const databaseEscrowPDA = new PublicKey(accounts.escrowPda);
+                // The wagerId parameter should be the correctly derived wager PDA
+                // The escrowPda parameter should be the escrow PDA from database
+                const wagerAccountPDA = new PublicKey(accounts.wagerId);
+                const escrowAccountPDA = new PublicKey(accounts.escrowPda);
 
-                console.log(`🔍 Using database PDAs to avoid account creation:`);
-                console.log(`🔍 Database wager PDA: ${databaseWagerPDA.toString()}`);
-                console.log(`🔍 Database escrow PDA: ${databaseEscrowPDA.toString()}`);
+                console.log(`🔍 Using correct PDAs for expired wager handling:`);
+                console.log(`🔍 Wager account PDA: ${wagerAccountPDA.toString()}`);
+                console.log(`🔍 Escrow account PDA: ${escrowAccountPDA.toString()}`);
 
                 // Verify accounts exist before proceeding
                 try {
-                    const wagerAccount = await anchorProgram.account.wager.fetch(databaseWagerPDA);
-                    const escrowBalance = await anchorProgram.provider.connection.getBalance(databaseEscrowPDA);
+                    const wagerAccount = await anchorProgram.account.wager.fetch(wagerAccountPDA);
+                    const escrowBalance = await anchorProgram.provider.connection.getBalance(escrowAccountPDA);
 
-                    console.log(`✅ Wager account verified: ${databaseWagerPDA.toString()}`);
-                    console.log(`✅ Escrow account verified: ${databaseEscrowPDA.toString()}`);
+                    console.log(`✅ Wager account verified: ${wagerAccountPDA.toString()}`);
+                    console.log(`✅ Escrow account verified: ${escrowAccountPDA.toString()}`);
                     console.log(`✅ Escrow balance: ${escrowBalance / LAMPORTS_PER_SOL} SOL`);
+                    console.log(`🔍 Expected wager amount: ${wagerAccount.amount / LAMPORTS_PER_SOL} SOL`);
+                    console.log(`⚠️ Balance vs Expected: ${escrowBalance / LAMPORTS_PER_SOL} SOL vs ${wagerAccount.amount / LAMPORTS_PER_SOL} SOL`);
 
                     if (escrowBalance === 0) {
                         throw new Error('Escrow account has no funds');
+                    }
+
+                    // Check if escrow has sufficient funds for the wager amount
+                    if (escrowBalance < wagerAccount.amount) {
+                        console.error(`❌ Insufficient escrow funds! Escrow: ${escrowBalance / LAMPORTS_PER_SOL} SOL, Required: ${wagerAccount.amount / LAMPORTS_PER_SOL} SOL`);
+                        throw new Error(`Insufficient escrow funds. Expected ${wagerAccount.amount / LAMPORTS_PER_SOL} SOL but escrow only has ${escrowBalance / LAMPORTS_PER_SOL} SOL`);
                     }
                 } catch (accountError) {
                     console.error('❌ Account verification failed:', accountError);
@@ -150,8 +158,8 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 result = await anchorProgram.methods
                     .handleExpiredWager()
                     .accounts({
-                        wager: databaseWagerPDA,
-                        escrow: databaseEscrowPDA,
+                        wager: wagerAccountPDA,
+                        escrow: escrowAccountPDA,
                         creator: new PublicKey(accounts.creatorPubkey),
                         authority: authorityKeypair.publicKey,
                     })
@@ -1628,9 +1636,19 @@ async function handleExpiredWagerOnChain(wagerId, creatorId, amount) {
             console.log(`   Creator Wallet: ${creatorWallet.toString()}`);
 
             // Execute the handleExpiredWager instruction
+            // Derive the correct wager PDA from the wager_id
+            console.log(`🔍 Deriving wager PDA from wager_id: ${wagerData.wager_id}`);
+            const wagerId = wagerData.wager_id;
+            const seed = wagerId.length > 32 ? Buffer.from(wagerId, 'utf8').slice(0, 32) : Buffer.from(wagerId, 'utf8');
+            const [wagerPDA, bump] = PublicKey.findProgramAddressSync(
+                [Buffer.from('wager'), seed],
+                WAGERFI_PROGRAM_ID
+            );
+            console.log(`🔍 Derived wager PDA: ${wagerPDA.toString()}`);
+
             const transaction = await executeProgramInstruction('handleExpiredWager', {
-                wagerId: wagerData.escrow_pda, // Use escrow_pda as the wager account PDA
-                escrowPda: wagerData.escrow_pda, // Pass the escrow PDA for verification
+                wagerId: wagerPDA.toString(), // Use the correctly derived wager PDA
+                escrowPda: wagerData.escrow_pda, // Use the escrow PDA from database
                 creatorPubkey: creatorWallet.toString()
             });
 
@@ -2329,10 +2347,23 @@ async function processWagerRefundOnChain(wager) {
             console.log(`   Authority: ${authorityKeypair.publicKey.toString()}`);
 
             // Execute the handleExpiredWager instruction to refund the creator
-            // Pass the actual PDAs from the database to avoid PublicKey creation errors
+            // Derive the correct wager PDA from the wager_id using the same logic as the frontend
+            console.log(`🔍 Deriving wager PDA from wager_id: ${wager.wager_id}`);
+
+            // Use the same PDA derivation logic as the frontend
+            const wagerId = wager.wager_id;
+            const seed = wagerId.length > 32 ? Buffer.from(wagerId, 'utf8').slice(0, 32) : Buffer.from(wagerId, 'utf8');
+            const [wagerPDA, bump] = PublicKey.findProgramAddressSync(
+                [Buffer.from('wager'), seed],
+                WAGERFI_PROGRAM_ID // Use the correct program ID
+            );
+
+            console.log(`🔍 Derived wager PDA: ${wagerPDA.toString()}`);
+            console.log(`🔍 Escrow PDA from database: ${wager.escrow_pda}`);
+
             const signature = await executeProgramInstruction('handleExpiredWager', {
-                wagerId: wager.escrow_pda, // Use escrow_pda as the wager account PDA
-                escrowPda: wager.escrow_pda, // Pass the escrow PDA for verification
+                wagerId: wagerPDA.toString(), // Use the correctly derived wager PDA
+                escrowPda: wager.escrow_pda, // Use the escrow PDA from database
                 creatorPubkey: userWallet.toString()
             });
 
