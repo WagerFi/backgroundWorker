@@ -2361,13 +2361,13 @@ async function processWagerRefundOnChain(wager) {
             console.log(`🔍 Derived wager PDA: ${wagerPDA.toString()}`);
             console.log(`🔍 Escrow PDA from database: ${wager.escrow_pda}`);
 
-            const signature = await executeProgramInstruction('handleExpiredWager', {
+            const signature = await executeProgramInstruction('cancelWager', {
                 wagerId: wagerPDA.toString(), // Use the correctly derived wager PDA
                 escrowPda: wager.escrow_pda, // Use the escrow PDA from database
                 creatorPubkey: userWallet.toString()
             });
 
-            console.log(`   🔐 Real escrow withdrawal completed: ${signature}`);
+            console.log(`   🔐 Real wager cancellation completed: ${signature}`);
 
             return {
                 success: true,
@@ -2380,11 +2380,11 @@ async function processWagerRefundOnChain(wager) {
             };
 
         } catch (onChainError) {
-            console.error(`❌ Real on-chain refund failed:`, onChainError);
+            console.error(`❌ Real on-chain cancellation failed:`, onChainError);
 
             // Fallback to simulation for now
             const mockSignature = `mock_refund_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            console.log(`   🔐 Falling back to simulated escrow withdrawal: ${mockSignature}`);
+            console.log(`   🔐 Falling back to simulated wager cancellation: ${mockSignature}`);
 
             return {
                 success: true,
