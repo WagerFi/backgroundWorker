@@ -2,7 +2,8 @@ import express from 'express';
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
 import { PublicKey, Keypair, Transaction, SystemProgram, LAMPORTS_PER_SOL, Connection } from '@solana/web3.js';
-import { Program, AnchorProvider, BN } from '@project-serum/anchor';
+import pkg from '@project-serum/anchor';
+const { Program, AnchorProvider, BN } = pkg;
 
 import fetch from 'node-fetch';
 import cors from 'cors';
