@@ -121,51 +121,25 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 break;
 
             case 'handleExpiredWager':
-                // CRITICAL FIX: Handle long wager IDs that exceed Solana's seed length limit
-                let wagerIdBytes;
-                try {
-                    // Try to use the original wager ID
-                    wagerIdBytes = Buffer.from(accounts.wagerId, 'utf8');
+                // Use the PDAs stored in the database to avoid creating new accounts
+                // The database PDAs are the actual Solana accounts that exist
 
-                    // Check if the wager ID is too long for Solana PDA derivation
-                    if (wagerIdBytes.length > 32) {
-                        console.log(`⚠️ Wager ID too long (${wagerIdBytes.length} bytes), truncating to 32 bytes`);
-                        // Truncate to 32 bytes (Solana's limit)
-                        wagerIdBytes = wagerIdBytes.slice(0, 32);
-                    }
-                } catch (error) {
-                    console.error('❌ Error processing wager ID:', error);
-                    throw new Error(`Invalid wager ID: ${accounts.wagerId}`);
-                }
+                // Use the PDAs stored in the database to avoid creating new accounts
+                // The database PDAs are the actual Solana accounts that exist
+                const databaseWagerPDA = new PublicKey(accounts.wagerId);
+                const databaseEscrowPDA = new PublicKey(accounts.escrowPda);
 
-                console.log(`🔍 Processing wager ID: ${accounts.wagerId} (${wagerIdBytes.length} bytes)`);
-
-                // Derive the correct wager PDA
-                const [correctWagerPDA] = PublicKey.findProgramAddressSync(
-                    [Buffer.from('wager'), wagerIdBytes],
-                    WAGERFI_PROGRAM_ID
-                );
-
-                // Derive the correct escrow PDA
-                const [correctEscrowPDA] = PublicKey.findProgramAddressSync(
-                    [Buffer.from('escrow'), wagerIdBytes],
-                    WAGERFI_PROGRAM_ID
-                );
-
-                console.log(`🔍 Derived PDAs from wager ID: ${accounts.wagerId}`);
-                console.log(`🔍 Wager ID length: ${accounts.wagerId.length} characters`);
-                console.log(`🔍 Wager ID bytes: ${wagerIdBytes.length} bytes`);
-                console.log(`🔍 Correct wager PDA: ${correctWagerPDA.toString()}`);
-                console.log(`🔍 Correct escrow PDA: ${correctEscrowPDA.toString()}`);
-                console.log(`🔍 Database escrow PDA: ${accounts.escrowPda || 'not provided'}`);
+                console.log(`🔍 Using database PDAs to avoid account creation:`);
+                console.log(`🔍 Database wager PDA: ${databaseWagerPDA.toString()}`);
+                console.log(`🔍 Database escrow PDA: ${databaseEscrowPDA.toString()}`);
 
                 // Verify accounts exist before proceeding
                 try {
-                    const wagerAccount = await anchorProgram.account.wager.fetch(correctWagerPDA);
-                    const escrowBalance = await anchorProgram.provider.connection.getBalance(correctEscrowPDA);
+                    const wagerAccount = await anchorProgram.account.wager.fetch(databaseWagerPDA);
+                    const escrowBalance = await anchorProgram.provider.connection.getBalance(databaseEscrowPDA);
 
-                    console.log(`✅ Wager account verified: ${correctWagerPDA.toString()}`);
-                    console.log(`✅ Escrow account verified: ${correctEscrowPDA.toString()}`);
+                    console.log(`✅ Wager account verified: ${databaseWagerPDA.toString()}`);
+                    console.log(`✅ Escrow account verified: ${databaseEscrowPDA.toString()}`);
                     console.log(`✅ Escrow balance: ${escrowBalance / LAMPORTS_PER_SOL} SOL`);
 
                     if (escrowBalance === 0) {
@@ -179,8 +153,8 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 result = await anchorProgram.methods
                     .handleExpiredWager()
                     .accounts({
-                        wager: correctWagerPDA,
-                        escrow: correctEscrowPDA,
+                        wager: databaseWagerPDA,
+                        escrow: databaseEscrowPDA,
                         creator: new PublicKey(accounts.creatorPubkey),
                         authority: authorityKeypair.publicKey,
                     })
@@ -1899,29 +1873,47 @@ async function refundUnmatchedExpiredWager(wager) {
 
                     if (userError || !userData) {
                         console.error('❌ Error fetching user data for notification:', userError);
+                        console.log(`🔍 Attempted to find user with ID: ${wager.creator_id}`);
                         return;
                     }
 
                     const userAddress = userData.wallet_address || userData.user_address;
                     if (!userAddress) {
                         console.error('❌ No wallet address found for user:', wager.creator_id);
+                        console.log(`🔍 User data found:`, userData);
                         return;
                     }
+
+                    console.log(`🔍 Creating notification for user ${wager.creator_id} with address ${userAddress}`);
 
                     // Create notification directly in the database
                     const { error: notificationError } = await supabase
                         .from('notifications')
                         .insert({
+                            user_id: wager.creator_id, // Add user_id to match the table schema
                             user_address: userAddress,
                             type: 'wager_expired',
                             title: 'Expired Wager Refunded!',
                             message: `Your unmatched crypto wager on ${wager.token_symbol} has expired and been refunded. Transaction: ${refundResult.signature}`,
                             data: { wager_id: wager.wager_id, refund_signature: refundResult.signature },
-                            read: false
+                            read: false,
+                            is_deleted: false,
+                            created_at: new Date().toISOString()
                         });
 
                     if (notificationError) {
                         console.error('❌ Error creating notification:', notificationError);
+                        console.log(`🔍 Notification data attempted:`, {
+                            user_id: wager.creator_id,
+                            user_address: userAddress,
+                            type: 'wager_expired',
+                            title: 'Expired Wager Refunded!',
+                            message: `Your unmatched crypto wager on ${wager.token_symbol} has expired and been refunded. Transaction: ${refundResult.signature}`,
+                            data: { wager_id: wager.wager_id, refund_signature: refundResult.signature },
+                            read: false,
+                            is_deleted: false,
+                            created_at: new Date().toISOString()
+                        });
                     } else {
                         console.log(`✅ Notification created for user ${wager.creator_id} (${userAddress})`);
                     }
@@ -2210,7 +2202,7 @@ async function processWagerRefundOnChain(wager) {
             console.log(`   Authority: ${authorityKeypair.publicKey.toString()}`);
 
             // Execute the handleExpiredWager instruction to refund the creator
-            // We need the actual wager ID for PDA derivation, not the escrow PDA
+            // Use the actual PDAs stored in the database to avoid creation of new accounts
             const signature = await executeProgramInstruction('handleExpiredWager', {
                 wagerId: wager.wager_id, // Use the actual wager ID for PDA derivation
                 escrowPda: wager.escrow_pda, // Pass the escrow PDA for verification
