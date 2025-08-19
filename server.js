@@ -118,6 +118,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                         wager: wagerPDA,
                         escrow: escrowPDA,
                         winner: new PublicKey(accounts.winnerPubkey),
+                        treasury: TREASURY_WALLET,
                         authority: authorityKeypair.publicKey,
                     })
                     .signers([authorityKeypair])
