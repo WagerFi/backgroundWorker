@@ -1556,8 +1556,8 @@ async function handleExpiredWagerOnChain(wagerId, creatorId, amount) {
 
             // Execute the handleExpiredWager instruction
             const transaction = await executeProgramInstruction('handleExpiredWager', {
-                wagerId: wagerData.escrow_pda, // Use the escrow PDA as the wager ID
-                escrowPda: wagerData.escrow_pda, // Pass the escrow PDA explicitly
+                wagerId: wagerData.wager_id, // Use the actual wager ID for PDA derivation
+                escrowPda: wagerData.escrow_pda, // Pass the escrow PDA for verification
                 creatorPubkey: creatorWallet.toString()
             });
 
@@ -1890,12 +1890,41 @@ async function refundUnmatchedExpiredWager(wager) {
             if (result.success) {
                 // Create notification for user
                 try {
-                    await createNotification(
-                        wager.creator_id,
-                        'wager_expired',
-                        'Expired Wager Refunded!',
-                        `Your unmatched crypto wager on ${wager.token_symbol} has expired and been refunded. Transaction: ${refundResult.signature}`
-                    );
+                    // Get the user's wallet address for the notification
+                    const { data: userData, error: userError } = await supabase
+                        .from('users')
+                        .select('wallet_address, user_address')
+                        .eq('id', wager.creator_id)
+                        .single();
+
+                    if (userError || !userData) {
+                        console.error('❌ Error fetching user data for notification:', userError);
+                        return;
+                    }
+
+                    const userAddress = userData.wallet_address || userData.user_address;
+                    if (!userAddress) {
+                        console.error('❌ No wallet address found for user:', wager.creator_id);
+                        return;
+                    }
+
+                    // Create notification directly in the database
+                    const { error: notificationError } = await supabase
+                        .from('notifications')
+                        .insert({
+                            user_address: userAddress,
+                            type: 'wager_expired',
+                            title: 'Expired Wager Refunded!',
+                            message: `Your unmatched crypto wager on ${wager.token_symbol} has expired and been refunded. Transaction: ${refundResult.signature}`,
+                            data: { wager_id: wager.wager_id, refund_signature: refundResult.signature },
+                            read: false
+                        });
+
+                    if (notificationError) {
+                        console.error('❌ Error creating notification:', notificationError);
+                    } else {
+                        console.log(`✅ Notification created for user ${wager.creator_id} (${userAddress})`);
+                    }
                 } catch (notificationError) {
                     console.error('❌ Failed to create notification:', notificationError);
                     // Don't fail the refund process due to notification errors
@@ -2181,10 +2210,10 @@ async function processWagerRefundOnChain(wager) {
             console.log(`   Authority: ${authorityKeypair.publicKey.toString()}`);
 
             // Execute the handleExpiredWager instruction to refund the creator
-            // Use escrow_pda as the wager account (it's the actual Solana account)
+            // We need the actual wager ID for PDA derivation, not the escrow PDA
             const signature = await executeProgramInstruction('handleExpiredWager', {
-                wagerId: wager.escrow_pda, // Use the escrow PDA as the wager ID
-                escrowPda: wager.escrow_pda, // Pass the escrow PDA explicitly
+                wagerId: wager.wager_id, // Use the actual wager ID for PDA derivation
+                escrowPda: wager.escrow_pda, // Pass the escrow PDA for verification
                 creatorPubkey: userWallet.toString()
             });
 
