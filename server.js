@@ -2140,7 +2140,8 @@ async function resolveExpiringCryptoWagers() {
             .eq('status', 'active')
             .gte('expires_at', new Date(now.getTime() - 2000).toISOString()) // Expired within last 2 seconds
             .lte('expires_at', now.toISOString()) // But not expired more than 2 seconds ago
-            .is('metadata->expiry_processed', null);
+            .is('metadata->expiry_processed', null)
+            .is('metadata->resolution_status', null); // Don't process wagers already being resolved
 
         // Also check for wagers expiring in the next 1 second to be extra precise
         const { data: aboutToExpireWagers, error: aboutToExpireError } = await supabase
@@ -2149,7 +2150,8 @@ async function resolveExpiringCryptoWagers() {
             .eq('status', 'active')
             .gte('expires_at', now.toISOString()) // Not yet expired
             .lte('expires_at', new Date(now.getTime() + 1000).toISOString()) // But expiring within next second
-            .is('metadata->expiry_processed', null);
+            .is('metadata->expiry_processed', null)
+            .is('metadata->resolution_status', null); // Don't process wagers already being resolved
 
         if (aboutToExpireError) {
             console.error('❌ Error fetching about-to-expire crypto wagers:', aboutToExpireError);
@@ -2176,11 +2178,28 @@ async function resolveExpiringCryptoWagers() {
 
         for (const wager of allExpiringWagers) {
             try {
-                const wagerExpiryTime = new Date(wager.expires_at);
-                const timeUntilExpiry = wagerExpiryTime.getTime() - now.getTime();
+                // IMMEDIATELY mark this wager as processing to prevent double-execution
+                const { error: processingError } = await supabase
+                    .from('crypto_wagers')
+                    .update({
+                        metadata: {
+                            ...(wager.metadata || {}),
+                            resolution_status: 'processing',
+                            resolution_started_at: new Date().toISOString()
+                        }
+                    })
+                    .eq('id', wager.id);
+
+                if (processingError) {
+                    console.error(`❌ Error marking wager ${wager.wager_id} as processing:`, processingError);
+                    continue; // Skip this wager if we can't mark it as processing
+                }
 
                 console.log(`⚡ Immediate resolution for wager ${wager.wager_id}`);
                 console.log(`   Expiry time: ${wager.expires_at}`);
+
+                const wagerExpiryTime = new Date(wager.expires_at);
+                const timeUntilExpiry = wagerExpiryTime.getTime() - now.getTime();
                 console.log(`   Time until expiry: ${timeUntilExpiry}ms`);
 
                 // If wager hasn't expired yet, wait until it does for maximum accuracy
@@ -2235,11 +2254,29 @@ async function resolveExpiringCryptoWagers() {
                         ? wager.creator_address
                         : wager.acceptor_address;
 
-                    // Update database with resolution
-                    const { error: updateError } = await supabase
+                    // IMMEDIATELY update database status to prevent double-processing
+                    const { error: immediateUpdateError } = await supabase
                         .from('crypto_wagers')
                         .update({
                             status: 'resolved',
+                            metadata: {
+                                ...(wager.metadata || {}),
+                                resolution_status: 'processing',
+                                resolution_started_at: new Date().toISOString()
+                            }
+                        })
+                        .eq('id', wager.id);
+
+                    if (immediateUpdateError) {
+                        console.error(`❌ Error updating wager status immediately:`, immediateUpdateError);
+                    } else {
+                        console.log(`✅ Immediately marked wager ${wager.wager_id} as processing to prevent double-execution`);
+                    }
+
+                    // Now update with full resolution details
+                    const { error: updateError } = await supabase
+                        .from('crypto_wagers')
+                        .update({
                             winner_id: winnerId,
                             winner_address: winnerWalletAddress,
                             winner_position: winnerPosition,
@@ -2257,7 +2294,9 @@ async function resolveExpiringCryptoWagers() {
                                     resolution_timing: 'immediate_at_expiry',
                                     resolution_delay_ms: Math.abs(timeUntilExpiry),
                                     price_fetch_timestamp: new Date().toISOString()
-                                }
+                                },
+                                resolution_status: 'completed',
+                                resolution_completed_at: new Date().toISOString()
                             }
                         })
                         .eq('id', wager.id);
