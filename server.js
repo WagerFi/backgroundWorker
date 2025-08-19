@@ -3122,7 +3122,7 @@ app.listen(PORT, () => {
             }
 
             console.log(`🧪 Testing notification for user: ${testUser.id} (${testUser.wallet_address})`);
-            await createNotification(testUser.id, 'system_announcement', 'Test Notification', 'Background worker is running and notifications are working!');
+            await createNotification(testUser.id, 'system', 'Test Notification', 'Background worker is running and notifications are working!');
             console.log('✅ Notification test completed');
         } catch (error) {
             console.error('❌ Notification test failed:', error);
