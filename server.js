@@ -121,9 +121,24 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 break;
 
             case 'handleExpiredWager':
-                // CRITICAL FIX: We need to derive the correct PDAs from the wager ID
-                // The database escrow_pda might be wrong, so we derive it correctly
-                const wagerIdBytes = Buffer.from(accounts.wagerId, 'utf8');
+                // CRITICAL FIX: Handle long wager IDs that exceed Solana's seed length limit
+                let wagerIdBytes;
+                try {
+                    // Try to use the original wager ID
+                    wagerIdBytes = Buffer.from(accounts.wagerId, 'utf8');
+
+                    // Check if the wager ID is too long for Solana PDA derivation
+                    if (wagerIdBytes.length > 32) {
+                        console.log(`⚠️ Wager ID too long (${wagerIdBytes.length} bytes), truncating to 32 bytes`);
+                        // Truncate to 32 bytes (Solana's limit)
+                        wagerIdBytes = wagerIdBytes.slice(0, 32);
+                    }
+                } catch (error) {
+                    console.error('❌ Error processing wager ID:', error);
+                    throw new Error(`Invalid wager ID: ${accounts.wagerId}`);
+                }
+
+                console.log(`🔍 Processing wager ID: ${accounts.wagerId} (${wagerIdBytes.length} bytes)`);
 
                 // Derive the correct wager PDA
                 const [correctWagerPDA] = PublicKey.findProgramAddressSync(
@@ -138,6 +153,8 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 );
 
                 console.log(`🔍 Derived PDAs from wager ID: ${accounts.wagerId}`);
+                console.log(`🔍 Wager ID length: ${accounts.wagerId.length} characters`);
+                console.log(`🔍 Wager ID bytes: ${wagerIdBytes.length} bytes`);
                 console.log(`🔍 Correct wager PDA: ${correctWagerPDA.toString()}`);
                 console.log(`🔍 Correct escrow PDA: ${correctEscrowPDA.toString()}`);
                 console.log(`🔍 Database escrow PDA: ${accounts.escrowPda || 'not provided'}`);
@@ -244,21 +261,40 @@ async function createNotification(userId, type, title, message, data = {}) {
             return;
         }
 
+        // First, get the user's wallet address from the users table
+        const { data: userData, error: userError } = await supabase
+            .from('users')
+            .select('wallet_address, user_address')
+            .eq('id', userId)
+            .single();
+
+        if (userError || !userData) {
+            console.error('❌ Error fetching user data for notification:', userError);
+            return;
+        }
+
+        // Use wallet_address or user_address, whichever is available
+        const userAddress = userData.wallet_address || userData.user_address;
+        if (!userAddress) {
+            console.error('❌ No wallet address found for user:', userId);
+            return;
+        }
+
         const { error } = await supabase
             .from('notifications')
             .insert({
-                user_id: userId,
+                user_address: userAddress, // Use user_address as per database schema
                 type: type,
                 title: title,
                 message: message,
                 data: data,
-                is_read: false
+                read: false // Use 'read' instead of 'is_read' as per database schema
             });
 
         if (error) {
             console.error('❌ Error creating notification:', error);
         } else {
-            console.log(`✅ Notification created for user ${userId}: ${type}`);
+            console.log(`✅ Notification created for user ${userId} (${userAddress}): ${type}`);
         }
     } catch (error) {
         console.error('❌ Error in createNotification:', error);
@@ -1853,12 +1889,17 @@ async function refundUnmatchedExpiredWager(wager) {
 
             if (result.success) {
                 // Create notification for user
-                await createNotification(
-                    wager.creator_id,
-                    'wager_expired',
-                    'Expired Wager Refunded!',
-                    `Your unmatched crypto wager on ${wager.token_symbol} has expired and been refunded. Transaction: ${refundResult.signature}`
-                );
+                try {
+                    await createNotification(
+                        wager.creator_id,
+                        'wager_expired',
+                        'Expired Wager Refunded!',
+                        `Your unmatched crypto wager on ${wager.token_symbol} has expired and been refunded. Transaction: ${refundResult.signature}`
+                    );
+                } catch (notificationError) {
+                    console.error('❌ Failed to create notification:', notificationError);
+                    // Don't fail the refund process due to notification errors
+                }
 
                 console.log(`✅ Refunded unmatched expired wager ${wager.wager_id}`);
             }
