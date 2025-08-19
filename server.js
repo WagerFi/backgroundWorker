@@ -254,12 +254,15 @@ async function createNotification(userId, type, title, message, data = {}) {
         const { error } = await supabase
             .from('notifications')
             .insert({
+                user_id: userId, // Add the missing user_id field
                 user_address: userAddress, // Use user_address as per database schema
                 type: type,
                 title: title,
                 message: message,
                 data: data,
-                read: false // Use 'read' instead of 'is_read' as per database schema
+                read: false, // Use 'read' instead of 'is_read' as per database schema
+                is_deleted: false,
+                created_at: new Date().toISOString()
             });
 
         if (error) {
@@ -699,29 +702,14 @@ app.post('/cancel-wager', async (req, res) => {
             });
         }
 
-        // Now try to get the specific wager with 'open' status
-        console.log(`🔍 Querying for open wager with wager_id: ${wager_id} and status: 'open'`);
-
-        const { data: wagers, error: fetchError } = await supabase
-            .from(tableName)
-            .select('*')
-            .eq('wager_id', wager_id)
-            .eq('status', 'open');
-
-        console.log(`🔍 Query result:`, { wagers, fetchError });
-
-        if (fetchError) {
-            console.error(`❌ Error fetching open wager ${wager_id}:`, fetchError);
-            return res.status(500).json({ error: `Database query failed: ${fetchError.message}` });
+        // Use the wager we already found instead of doing another query
+        if (!allWagers || allWagers.length === 0) {
+            console.error(`❌ No wager found with ID ${wager_id}`);
+            return res.status(404).json({ error: 'Wager not found' });
         }
 
-        if (!wagers || wagers.length === 0) {
-            console.error(`❌ No open wager found with ID ${wager_id}`);
-            return res.status(404).json({ error: 'Wager not found or not open' });
-        }
-
-        // Get the first open wager (should only be one anyway)
-        const wager = wagers[0];
+        // Get the first wager (should only be one anyway)
+        const wager = allWagers[0];
         console.log(`🔍 Selected wager for cancellation:`, {
             id: wager.id,
             wager_id: wager.wager_id,
@@ -729,6 +717,14 @@ app.post('/cancel-wager', async (req, res) => {
             creator_id: wager.creator_id,
             creator_address: wager.creator_address
         });
+
+        // Check if the wager is open and can be cancelled
+        if (wager.status !== 'open') {
+            console.log(`❌ Wager ${wager_id} cannot be cancelled - status is ${wager.status}`);
+            return res.status(400).json({
+                error: `Wager cannot be cancelled in current status: ${wager.status}`
+            });
+        }
 
         // Check if user has permission to cancel
         let hasPermission = false;
