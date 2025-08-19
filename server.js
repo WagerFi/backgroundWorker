@@ -103,16 +103,13 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
 
         switch (instructionName) {
             case 'resolveWager':
-                // Derive correct wager PDA from the string wager_id
-                console.log(`🔍 Deriving wager PDA from wager_id: ${accounts.wagerId}`);
-                const [resolveWagerPDA] = PublicKey.findProgramAddressSync(
-                    [Buffer.from(accounts.wagerId)],
-                    new PublicKey(WAGERFI_PROGRAM_ID)
-                );
+                // Use the escrow PDA from database as the wager account (same as cancellation/refunds)
+                console.log(`🔍 Using escrow PDA as wager account: ${accounts.escrowPda}`);
+                const resolveWagerPDA = new PublicKey(accounts.escrowPda);
                 const resolveEscrowPDA = new PublicKey(accounts.escrowPda);
 
-                console.log(`🔍 Derived wager PDA: ${resolveWagerPDA.toString()}`);
-                console.log(`🔍 Escrow PDA from database: ${resolveEscrowPDA.toString()}`);
+                console.log(`🔍 Wager account (from escrow_pda): ${resolveWagerPDA.toString()}`);
+                console.log(`🔍 Escrow account (same): ${resolveEscrowPDA.toString()}`);
 
                 result = await anchorProgram.methods
                     .resolveWager({ [args.winner.toLowerCase()]: {} })
