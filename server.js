@@ -49,12 +49,35 @@ const WAGERFI_PROGRAM_ID = new PublicKey('3trZZeVh3j9sx6H8ZYCdsouGnMjcyyGQoLqLE7
 // Authority keypair for executing program instructions
 // This should be loaded from environment or secure storage
 const AUTHORITY_PRIVATE_KEY = process.env.AUTHORITY_PRIVATE_KEY;
-const authorityKeypair = AUTHORITY_PRIVATE_KEY ?
-    Keypair.fromSecretKey(Buffer.from(JSON.parse(AUTHORITY_PRIVATE_KEY))) :
-    null;
+console.log('🔍 AUTHORITY_PRIVATE_KEY check:', AUTHORITY_PRIVATE_KEY ? 'Present' : 'Missing');
+
+let authorityKeypair = null;
+if (AUTHORITY_PRIVATE_KEY) {
+    try {
+        const secretKeyArray = JSON.parse(AUTHORITY_PRIVATE_KEY);
+        console.log('🔍 Secret key array length:', secretKeyArray.length);
+        console.log('🔍 Secret key array first 8 bytes:', secretKeyArray.slice(0, 8));
+
+        const secretKeyBuffer = Buffer.from(secretKeyArray);
+        console.log('🔍 Secret key buffer length:', secretKeyBuffer.length);
+
+        authorityKeypair = Keypair.fromSecretKey(secretKeyBuffer);
+        console.log('🔍 Keypair created successfully');
+        console.log('🔍 Public key:', authorityKeypair.publicKey.toString());
+        console.log('🔍 Is Keypair instance:', authorityKeypair instanceof Keypair);
+        console.log('🔍 Has secretKey property:', !!authorityKeypair.secretKey);
+        console.log('🔍 SecretKey length:', authorityKeypair.secretKey?.length || 'undefined');
+    } catch (error) {
+        console.error('❌ Error creating keypair:', error);
+        process.exit(1);
+    }
+} else {
+    console.error('❌ AUTHORITY_PRIVATE_KEY not found. Cannot execute on-chain transactions.');
+    process.exit(1);
+}
 
 if (!authorityKeypair) {
-    console.error('❌ AUTHORITY_PRIVATE_KEY not found. Cannot execute on-chain transactions.');
+    console.error('❌ Failed to create authority keypair. Cannot execute on-chain transactions.');
     process.exit(1);
 }
 
@@ -72,7 +95,8 @@ const idl = JSON.parse(readFileSync(idlPath, 'utf8'));
 
 console.log('📋 Loaded WagerFi IDL with instructions:', idl.instructions.map(i => i.name));
 
-// Create Anchor provider and program
+// Create Anchor provider and program using the authority keypair directly
+// Note: We don't need to create a wallet interface since we'll pass the keypair to signers()
 const anchorProvider = new AnchorProvider(connection, {
     publicKey: authorityKeypair.publicKey,
     signTransaction: async (tx) => {
@@ -84,6 +108,10 @@ const anchorProvider = new AnchorProvider(connection, {
         return txs;
     }
 }, { commitment: 'confirmed' });
+
+console.log('🔍 Provider wallet public key:', anchorProvider.wallet.publicKey.toString());
+console.log('🔍 Authority keypair public key:', authorityKeypair.publicKey.toString());
+console.log('🔍 Keys match:', anchorProvider.wallet.publicKey.equals(authorityKeypair.publicKey));
 
 const anchorProgram = new Program(idl, WAGERFI_PROGRAM_ID, anchorProvider);
 console.log('🔗 Anchor program initialized successfully');
@@ -300,11 +328,10 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     acceptorReferrer: accounts.acceptorReferrerPubkey ?
                         new PublicKey(accounts.acceptorReferrerPubkey) :
                         new PublicKey(accounts.treasuryPubkey), // Treasury placeholder (gets 0%)
-                    // Note: authority is NOT included here because it has "isSigner": true in the IDL
-                    // It will be handled by the .signers([authorityKeypair]) call
+                    authority: authorityKeypair.publicKey, // Include authority in accounts like other working instructions
                 };
 
-                console.log(`🔍 Final enhancedAccounts object (without authority):`, JSON.stringify(enhancedAccounts, (key, value) => {
+                console.log(`🔍 Final enhancedAccounts object (with authority):`, JSON.stringify(enhancedAccounts, (key, value) => {
                     if (value && typeof value === 'object' && value.toBase58) {
                         return value.toBase58();
                     }
@@ -313,9 +340,14 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
 
                 console.log(`🔍 Authority keypair debug:`);
                 console.log(`  Type: ${typeof authorityKeypair}`);
+                console.log(`  Constructor: ${authorityKeypair.constructor.name}`);
                 console.log(`  Public key: ${authorityKeypair.publicKey.toString()}`);
                 console.log(`  Has signTransaction: ${typeof authorityKeypair.signTransaction === 'function'}`);
+                console.log(`  Has secretKey: ${!!authorityKeypair.secretKey}`);
                 console.log(`  Signers array: [${authorityKeypair.publicKey.toString()}]`);
+
+                // Verify this is a proper Keypair instance
+                console.log(`  Is Keypair instance: ${authorityKeypair instanceof Keypair}`);
 
                 // Test if we can create a simple transaction with this keypair
                 try {
@@ -333,7 +365,22 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     console.log(`✅ Keypair signing test passed`);
                 } catch (signError) {
                     console.error(`❌ Keypair signing test failed:`, signError);
+                    console.error(`   Error details:`, signError.message);
                 }
+
+                // Final verification before transaction
+                console.log(`🔍 Final keypair verification before transaction:`);
+                console.log(`  Public key: ${authorityKeypair.publicKey.toString()}`);
+                console.log(`  Is Keypair instance: ${authorityKeypair instanceof Keypair}`);
+                console.log(`  Has secretKey: ${!!authorityKeypair.secretKey}`);
+                console.log(`  SecretKey type: ${typeof authorityKeypair.secretKey}`);
+                console.log(`  SecretKey is Uint8Array: ${authorityKeypair.secretKey instanceof Uint8Array}`);
+
+                // Ensure we're using a fresh, properly constructed keypair
+                const freshKeypair = Keypair.fromSecretKey(authorityKeypair.secretKey);
+                console.log(`🔍 Fresh keypair verification:`);
+                console.log(`  Public key matches: ${freshKeypair.publicKey.equals(authorityKeypair.publicKey)}`);
+                console.log(`  Is Keypair instance: ${freshKeypair instanceof Keypair}`);
 
                 result = await anchorProgram.methods
                     .resolveWagerWithReferrals(
@@ -342,7 +389,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                         args.acceptorReferrerPercentage || 0
                     )
                     .accounts(enhancedAccounts)
-                    .signers([authorityKeypair])
+                    .signers([freshKeypair])  // Use the fresh keypair to ensure it's properly constructed
                     .rpc();
                 break;
 
