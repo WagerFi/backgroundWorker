@@ -444,14 +444,8 @@ app.post('/resolve-crypto-wager', async (req, res) => {
             }
         }
 
-        // Execute on-chain resolution using your token program
-        const resolutionResult = await resolveCryptoWagerOnChain(
-            wager_id,
-            winnerPosition, // Pass 'creator' or 'acceptor' instead of user ID
-            wager.creator_id,
-            wager.acceptor_id,
-            wager.amount
-        );
+        // Execute on-chain resolution with enhanced referral processing
+        const resolutionResult = await resolveWagerWithReferrals(wager, winnerPosition, 'crypto');
 
         if (!resolutionResult.success) {
             return res.status(500).json({ error: resolutionResult.error });
@@ -2183,7 +2177,7 @@ async function acceptWagerOnChain(wagerId, creatorId, acceptorId, amount) {
                 .from('crypto_wagers')
                 .select('wager_id, escrow_pda')
                 .eq('wager_id', wagerId)
-                .single();
+                .maybeSingle();
 
             if (wagerError || !wagerData) {
                 throw new Error(`Failed to fetch crypto wager data: ${wagerError?.message || 'Wager not found'}`);
@@ -2353,14 +2347,8 @@ async function resolveExpiredMatchedWager(wager) {
             }
         }
 
-        // Execute on-chain resolution and payout
-        const resolutionResult = await resolveCryptoWagerOnChain(
-            wager.wager_id,
-            winnerPosition,
-            wager.creator_id,
-            wager.acceptor_id,
-            wager.amount
-        );
+        // Execute on-chain resolution with enhanced referral processing
+        const resolutionResult = await resolveWagerWithReferrals(wager, winnerPosition, 'crypto');
 
         if (resolutionResult.success) {
             // Get winner's wallet address
@@ -3093,13 +3081,7 @@ async function resolveExpiringCryptoWagers() {
                 }
 
                 // Execute on-chain resolution immediately
-                const resolutionResult = await resolveCryptoWagerOnChain(
-                    wager.wager_id,
-                    winnerPosition,
-                    wager.creator_id,
-                    wager.acceptor_id,
-                    wager.amount
-                );
+                const resolutionResult = await resolveWagerWithReferrals(wager, winnerPosition, 'crypto');
 
                 if (resolutionResult.success) {
                     // Get winner's wallet address
