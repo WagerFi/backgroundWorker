@@ -880,7 +880,7 @@ async function sendReferralPayout(referrerAddress, payoutAmount) {
 }
 
 // Get referral information for wager participants
-async function getWagerReferralInfo(creatorAddress, acceptorAddress) {
+async function getWagerReferralInfo(creatorAddress, acceptorAddress, wager) {
     try {
         console.log(`🔍 Fetching referral info for creator: ${creatorAddress}, acceptor: ${acceptorAddress}`);
 
@@ -909,10 +909,15 @@ async function getWagerReferralInfo(creatorAddress, acceptorAddress) {
                 .single();
 
             if (creatorReferrerData) {
+                const percentage = getReferralPercentage(creatorReferrerData.referral_level || 1);
+                const platformFee = wager.amount * 2 * 0.04; // 4% of total pot
+                const commissionAmount = (platformFee * percentage) / 100;
+
                 creatorReferrer = {
                     address: creatorReferrerData.wallet_address,
                     level: creatorReferrerData.referral_level || 1,
-                    percentage: getReferralPercentage(creatorReferrerData.referral_level || 1)
+                    percentage: percentage,
+                    commission_amount: commissionAmount
                 };
             }
         }
@@ -926,10 +931,15 @@ async function getWagerReferralInfo(creatorAddress, acceptorAddress) {
                 .single();
 
             if (acceptorReferrerData) {
+                const percentage = getReferralPercentage(acceptorReferrerData.referral_level || 1);
+                const platformFee = wager.amount * 2 * 0.04; // 4% of total pot
+                const commissionAmount = (platformFee * percentage) / 100;
+
                 acceptorReferrer = {
                     address: acceptorReferrerData.wallet_address,
                     level: acceptorReferrerData.referral_level || 1,
-                    percentage: getReferralPercentage(acceptorReferrerData.referral_level || 1)
+                    percentage: percentage,
+                    commission_amount: commissionAmount
                 };
             }
         }
@@ -955,6 +965,58 @@ function getReferralPercentage(level) {
     }
 }
 
+// Update wager status in database after resolution
+async function updateWagerStatus(wager, status, winnerPosition, signature) {
+    try {
+        const tableName = wager.token_symbol ? 'crypto_wagers' : 'sports_wagers';
+        const winnerId = winnerPosition === 'creator' ? wager.creator_id : wager.acceptor_id;
+        const winnerAddress = winnerPosition === 'creator' ? wager.creator_address : wager.acceptor_address;
+
+        const updateData = {
+            status: status,
+            winner_id: winnerId,
+            winner_address: winnerAddress,
+            winner_position: winnerPosition,
+            resolved_at: new Date().toISOString(),
+            on_chain_signature: signature,
+            metadata: {
+                ...(wager.metadata || {}),
+                resolution_details: {
+                    resolved_at: new Date().toISOString(),
+                    winner_position: winnerPosition
+                }
+            }
+        };
+
+        // Add crypto-specific fields
+        if (tableName === 'crypto_wagers') {
+            updateData.resolution_price = wager.target_price; // Use stored price
+            updateData.resolution_time = new Date().toISOString();
+        }
+
+        // Add sports-specific fields  
+        if (tableName === 'sports_wagers') {
+            updateData.resolution_outcome = winnerPosition; // For sports, outcome matches position
+        }
+
+        const { error: updateError } = await supabase
+            .from(tableName)
+            .update(updateData)
+            .eq('id', wager.id);
+
+        if (updateError) {
+            console.error(`❌ Error updating ${tableName} wager ${wager.wager_id}:`, updateError);
+            throw new Error(`Database update failed: ${updateError.message}`);
+        }
+
+        console.log(`✅ Updated ${tableName} wager ${wager.wager_id} status to ${status}`);
+
+    } catch (error) {
+        console.error(`❌ Error in updateWagerStatus:`, error);
+        throw error;
+    }
+}
+
 // Enhanced wager resolution with atomic referral payouts
 async function resolveWagerWithReferrals(wager, winnerPosition, wagerType) {
     try {
@@ -963,7 +1025,8 @@ async function resolveWagerWithReferrals(wager, winnerPosition, wagerType) {
         // 1. Get referral information for both participants
         const { creatorReferrer, acceptorReferrer } = await getWagerReferralInfo(
             wager.creator_address,
-            wager.acceptor_address
+            wager.acceptor_address,
+            wager
         );
 
         // 2. Execute enhanced on-chain resolution with referral data
@@ -980,14 +1043,14 @@ async function resolveWagerWithReferrals(wager, winnerPosition, wagerType) {
         }
 
         // 3. Update database with resolution
-        await updateWagerStatus(wager, 'resolved', winnerPosition);
+        await updateWagerStatus(wager, 'resolved', winnerPosition, onChainResult.signature);
 
         // 4. Update referrer stats in database (referral payouts already happened on-chain)
         if (creatorReferrer) {
-            await updateReferrerStats(creatorReferrer.address, wager.amount, wagerType);
+            await updateReferrerStats(wager.creator_address, wager.amount, creatorReferrer.commission_amount, wagerType);
         }
         if (acceptorReferrer) {
-            await updateReferrerStats(acceptorReferrer.address, wager.amount, wagerType);
+            await updateReferrerStats(wager.acceptor_address, wager.amount, acceptorReferrer.commission_amount, wagerType);
         }
 
         // 5. Update user stats
@@ -1101,25 +1164,85 @@ async function executeEnhancedWagerResolution(wager, winnerPosition, wagerType, 
 }
 
 // Update referrer statistics after successful payout
-async function updateReferrerStats(referrerAddress, wagerAmount, wagerType) {
+async function updateReferrerStats(wagererAddress, wagerAmount, commissionAmount, wagerType) {
     try {
-        console.log(`📈 Updating referrer stats for: ${referrerAddress}`);
+        console.log(`📈 Updating referrer stats for wagerer: ${wagererAddress}, wager: ${wagerAmount} SOL, commission: ${commissionAmount} SOL`);
 
-        // Call the existing process_referral_payout function which handles all the stats
-        const { data, error } = await supabase.rpc('process_referral_payout', {
-            p_wager_amount: wagerAmount,
-            p_wagerer_address: referrerAddress
-        });
+        // Get the referrer's wallet address first
+        const { data: wagerer, error: fetchError } = await supabase
+            .from('users')
+            .select('referred_by')
+            .eq('wallet_address', wagererAddress)
+            .single();
 
-        if (error) {
-            console.error(`❌ Error updating referrer stats for ${referrerAddress}:`, error);
+        if (fetchError || !wagerer?.referred_by) {
+            console.log(`ℹ️ No referrer found for wagerer: ${wagererAddress}`);
             return;
         }
 
-        console.log(`✅ Referrer stats updated for ${referrerAddress}:`, data);
+        const referrerAddress = wagerer.referred_by;
+        console.log(`📈 Updating stats for referrer: ${referrerAddress}`);
+
+        // Update referrer's database stats
+        const { data: currentReferrer, error: getCurrentError } = await supabase
+            .from('users')
+            .select('referral_trade_count, referral_trade_vol, referral_earnings, referral_level')
+            .eq('wallet_address', referrerAddress)
+            .single();
+
+        if (getCurrentError) {
+            console.error(`❌ Error fetching current referrer stats:`, getCurrentError);
+            return;
+        }
+
+        // Calculate new stats
+        const newTradeCount = (currentReferrer.referral_trade_count || 0) + 1;
+        const newTradeVol = (currentReferrer.referral_trade_vol || 0) + wagerAmount; // Add the full wager amount
+        const newEarnings = (currentReferrer.referral_earnings || 0) + commissionAmount; // Add the commission earned
+
+        // Update referrer stats
+        const { error: updateError } = await supabase
+            .from('users')
+            .update({
+                referral_trade_count: newTradeCount,
+                referral_trade_vol: newTradeVol,
+                referral_earnings: newEarnings,
+                updated_at: new Date().toISOString()
+            })
+            .eq('wallet_address', referrerAddress);
+
+        if (updateError) {
+            console.error(`❌ Error updating referrer stats:`, updateError);
+            return;
+        }
+
+        console.log(`✅ Updated referrer stats for ${referrerAddress}:`, {
+            trade_count: newTradeCount,
+            trade_vol: newTradeVol,
+            earnings: newEarnings
+        });
+
+        // Check for level upgrade thresholds: 30 SOL (L2), 100 SOL (L3), 250 SOL (L4)
+        let newLevel = currentReferrer.referral_level || 1;
+        if (newTradeVol >= 250) newLevel = 4; // Titan
+        else if (newTradeVol >= 100) newLevel = 3; // Rainmaker  
+        else if (newTradeVol >= 30) newLevel = 2; // Influencer
+        else newLevel = 1; // Recruiter
+
+        if (newLevel !== currentReferrer.referral_level) {
+            const { error: levelError } = await supabase
+                .from('users')
+                .update({ referral_level: newLevel })
+                .eq('wallet_address', referrerAddress);
+
+            if (!levelError) {
+                const levelNames = { 1: 'Recruiter', 2: 'Influencer', 3: 'Rainmaker', 4: 'Titan' };
+                console.log(`🎉 LEVEL UP! ${referrerAddress} promoted to Level ${newLevel} (${levelNames[newLevel]}) with ${newTradeVol} SOL volume`);
+            }
+        }
 
     } catch (error) {
-        console.error(`❌ Error in updateReferrerStats for ${referrerAddress}:`, error);
+        console.error(`❌ Error in updateReferrerStats:`, error);
     }
 }
 
