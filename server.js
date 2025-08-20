@@ -300,8 +300,15 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     acceptorReferrer: accounts.acceptorReferrerPubkey ?
                         new PublicKey(accounts.acceptorReferrerPubkey) :
                         new PublicKey(accounts.treasuryPubkey), // Treasury placeholder (gets 0%)
-                    authority: authorityKeypair, // Pass the keypair object, not just the public key
+                    authority: authorityKeypair.publicKey, // Pass the public key, not the keypair object
                 };
+
+                console.log(`🔍 Final enhancedAccounts object:`, JSON.stringify(enhancedAccounts, (key, value) => {
+                    if (value && typeof value === 'object' && value.toBase58) {
+                        return value.toBase58();
+                    }
+                    return value;
+                }, 2));
 
                 result = await anchorProgram.methods
                     .resolveWagerWithReferrals(
@@ -1193,8 +1200,8 @@ async function executeEnhancedWagerResolution(wager, winnerPosition, wagerType, 
                 winnerPubkey: winnerWallet.toString(),
                 creatorPubkey: wagerData.creator_address, // Add creator account for rent reclaim
                 treasuryPubkey: TREASURY_WALLET.toString(),
-                creatorReferrerPubkey: creatorReferrer?.address || null,
-                acceptorReferrerPubkey: acceptorReferrer?.address || null
+                creatorReferrerPubkey: creatorReferrer?.address || TREASURY_WALLET.toString(),
+                acceptorReferrerPubkey: acceptorReferrer?.address || TREASURY_WALLET.toString()
             }, {
                 winner: winnerPosition,
                 creatorReferrerPercentage: creatorReferrer?.percentage || 0,
