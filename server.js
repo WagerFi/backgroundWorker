@@ -3302,17 +3302,17 @@ async function updateWagerUserStats(wager, winnerId, winnerPosition, wagerType =
         }
         console.log(`   Wager amount: ${wagerAmount} SOL`);
 
-        // Update creator stats
+        // Update creator stats (no total_wagered - already counted during acceptance)
         await updateSingleUserStats(creatorId, {
-            total_wagered: wagerAmount,
+            total_wagered: 0, // Don't double-count: already added during wager acceptance
             won: winnerId && winnerPosition ? creatorWon : null, // null for draws
             is_draw: !winnerId || !winnerPosition,
             wager_type: wagerType
         });
 
-        // Update acceptor stats
+        // Update acceptor stats (no total_wagered - already counted during acceptance)
         await updateSingleUserStats(acceptorId, {
-            total_wagered: wagerAmount,
+            total_wagered: 0, // Don't double-count: already added during wager acceptance
             won: winnerId && winnerPosition ? acceptorWon : null, // null for draws  
             is_draw: !winnerId || !winnerPosition,
             wager_type: wagerType
