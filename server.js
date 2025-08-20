@@ -257,7 +257,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     acceptorReferrer: accounts.acceptorReferrerPubkey ?
                         new PublicKey(accounts.acceptorReferrerPubkey) :
                         new PublicKey(accounts.treasuryPubkey), // Treasury placeholder (gets 0%)
-                    authority: authorityKeypair.publicKey,
+                    authority: authorityKeypair, // Pass the keypair object, not just the public key
                 };
 
                 result = await anchorProgram.methods
