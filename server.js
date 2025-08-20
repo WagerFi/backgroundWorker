@@ -248,6 +248,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     wager: enhancedWagerPDA,
                     escrow: enhancedEscrowPDA,
                     winner: new PublicKey(accounts.winnerPubkey),
+                    creator: new PublicKey(accounts.creatorPubkey), // Add creator for rent reclaim
                     treasury: new PublicKey(accounts.treasuryPubkey),
                     // Always provide both referrer accounts (use treasury as placeholder when none exists)
                     creatorReferrer: accounts.creatorReferrerPubkey ?
@@ -1147,7 +1148,7 @@ async function executeEnhancedWagerResolution(wager, winnerPosition, wagerType, 
                 wagerId: wagerData.wager_id,
                 escrowPda: wagerData.escrow_pda,
                 winnerPubkey: winnerWallet.toString(),
-                // creatorPubkey: wagerData.creator_address, // Creator account not in current IDL
+                creatorPubkey: wagerData.creator_address, // Add creator account for rent reclaim
                 treasuryPubkey: TREASURY_WALLET.toString(),
                 creatorReferrerPubkey: creatorReferrer?.address || null,
                 acceptorReferrerPubkey: acceptorReferrer?.address || null

@@ -211,6 +211,11 @@
                     "isSigner": false
                 },
                 {
+                    "name": "creator",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
                     "name": "treasury",
                     "isMut": true,
                     "isSigner": false
