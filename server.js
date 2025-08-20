@@ -237,7 +237,6 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 console.log(`🔍 Wager account (derived): ${enhancedWagerPDA.toString()}`);
                 console.log(`🔍 Escrow account (from DB): ${enhancedEscrowPDA.toString()}`);
                 console.log(`🔍 Winner: ${accounts.winnerPubkey}`);
-                console.log(`🔍 Creator: ${accounts.creatorPubkey}`);
                 console.log(`🔍 Treasury: ${accounts.treasuryPubkey}`);
                 console.log(`🔍 Creator Referrer: ${accounts.creatorReferrerPubkey || 'None'}`);
                 console.log(`🔍 Acceptor Referrer: ${accounts.acceptorReferrerPubkey || 'None'}`);
@@ -249,7 +248,6 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     wager: enhancedWagerPDA,
                     escrow: enhancedEscrowPDA,
                     winner: new PublicKey(accounts.winnerPubkey),
-                    creator: new PublicKey(accounts.creatorPubkey), // Add creator for rent reclaim
                     treasury: new PublicKey(accounts.treasuryPubkey),
                     // Always provide both referrer accounts (use treasury as placeholder when none exists)
                     creatorReferrer: accounts.creatorReferrerPubkey ?
@@ -1149,7 +1147,7 @@ async function executeEnhancedWagerResolution(wager, winnerPosition, wagerType, 
                 wagerId: wagerData.wager_id,
                 escrowPda: wagerData.escrow_pda,
                 winnerPubkey: winnerWallet.toString(),
-                creatorPubkey: wagerData.creator_address, // Add creator account for rent reclaim
+                // creatorPubkey: wagerData.creator_address, // Creator account not in current IDL
                 treasuryPubkey: TREASURY_WALLET.toString(),
                 creatorReferrerPubkey: creatorReferrer?.address || null,
                 acceptorReferrerPubkey: acceptorReferrer?.address || null
