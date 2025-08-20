@@ -300,10 +300,11 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     acceptorReferrer: accounts.acceptorReferrerPubkey ?
                         new PublicKey(accounts.acceptorReferrerPubkey) :
                         new PublicKey(accounts.treasuryPubkey), // Treasury placeholder (gets 0%)
-                    authority: authorityKeypair.publicKey, // Pass the public key, not the keypair object
+                    // Note: authority is NOT included here because it has "isSigner": true in the IDL
+                    // It will be handled by the .signers([authorityKeypair]) call
                 };
 
-                console.log(`🔍 Final enhancedAccounts object:`, JSON.stringify(enhancedAccounts, (key, value) => {
+                console.log(`🔍 Final enhancedAccounts object (without authority):`, JSON.stringify(enhancedAccounts, (key, value) => {
                     if (value && typeof value === 'object' && value.toBase58) {
                         return value.toBase58();
                     }
