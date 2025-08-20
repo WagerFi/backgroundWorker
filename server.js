@@ -241,20 +241,20 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 console.log(`🔍 Creator Referrer: ${accounts.creatorReferrerPubkey || 'None'}`);
                 console.log(`🔍 Acceptor Referrer: ${accounts.acceptorReferrerPubkey || 'None'}`);
 
-                // Build accounts object
+                // Build accounts object - follow the EXACT order from exported IDL
                 const enhancedAccounts = {
                     wager: enhancedWagerPDA,
                     escrow: enhancedEscrowPDA,
                     winner: new PublicKey(accounts.winnerPubkey),
                     treasury: new PublicKey(accounts.treasuryPubkey),
+                    // Optional referrer accounts - only add if they exist (isOptional: true)
+                    ...(accounts.creatorReferrerPubkey && {
+                        creatorReferrer: new PublicKey(accounts.creatorReferrerPubkey)
+                    }),
+                    ...(accounts.acceptorReferrerPubkey && {
+                        acceptorReferrer: new PublicKey(accounts.acceptorReferrerPubkey)
+                    }),
                     authority: authorityKeypair.publicKey,
-                    // Always provide referrer accounts - use treasury as placeholder for null referrers
-                    creatorReferrer: accounts.creatorReferrerPubkey ?
-                        new PublicKey(accounts.creatorReferrerPubkey) :
-                        new PublicKey(accounts.treasuryPubkey), // Use treasury as placeholder
-                    acceptorReferrer: accounts.acceptorReferrerPubkey ?
-                        new PublicKey(accounts.acceptorReferrerPubkey) :
-                        new PublicKey(accounts.treasuryPubkey) // Use treasury as placeholder
                 };
 
                 result = await anchorProgram.methods

@@ -110,64 +110,6 @@
             ]
         },
         {
-            "name": "resolveWagerWithReferrals",
-            "accounts": [
-                {
-                    "name": "wager",
-                    "isMut": true,
-                    "isSigner": false
-                },
-                {
-                    "name": "escrow",
-                    "isMut": true,
-                    "isSigner": false
-                },
-                {
-                    "name": "winner",
-                    "isMut": true,
-                    "isSigner": false
-                },
-                {
-                    "name": "treasury",
-                    "isMut": true,
-                    "isSigner": false
-                },
-                {
-                    "name": "authority",
-                    "isMut": true,
-                    "isSigner": true
-                },
-                {
-                    "name": "creatorReferrer",
-                    "isMut": true,
-                    "isSigner": false,
-                    "isOptional": true
-                },
-                {
-                    "name": "acceptorReferrer",
-                    "isMut": true,
-                    "isSigner": false,
-                    "isOptional": true
-                }
-            ],
-            "args": [
-                {
-                    "name": "winner",
-                    "type": {
-                        "defined": "WinnerType"
-                    }
-                },
-                {
-                    "name": "creatorReferrerPercentage",
-                    "type": "u8"
-                },
-                {
-                    "name": "acceptorReferrerPercentage",
-                    "type": "u8"
-                }
-            ]
-        },
-        {
             "name": "cancelWager",
             "accounts": [
                 {
@@ -249,6 +191,64 @@
                 }
             ],
             "args": []
+        },
+        {
+            "name": "resolveWagerWithReferrals",
+            "accounts": [
+                {
+                    "name": "wager",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "escrow",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "winner",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "treasury",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "creatorReferrer",
+                    "isMut": true,
+                    "isSigner": false,
+                    "isOptional": true
+                },
+                {
+                    "name": "acceptorReferrer",
+                    "isMut": true,
+                    "isSigner": false,
+                    "isOptional": true
+                },
+                {
+                    "name": "authority",
+                    "isMut": true,
+                    "isSigner": true
+                }
+            ],
+            "args": [
+                {
+                    "name": "winner",
+                    "type": {
+                        "defined": "WinnerType"
+                    }
+                },
+                {
+                    "name": "creatorReferrerPercentage",
+                    "type": "u8"
+                },
+                {
+                    "name": "acceptorReferrerPercentage",
+                    "type": "u8"
+                }
+            ]
         }
     ],
     "accounts": [
@@ -364,96 +364,101 @@
         },
         {
             "code": 6001,
+            "name": "InvalidReferralPercentage",
+            "msg": "Invalid referral percentage - must be 0-25"
+        },
+        {
+            "code": 6002,
             "name": "WagerIdTooLong",
             "msg": "Wager ID too long"
         },
         {
-            "code": 6002,
+            "code": 6003,
             "name": "MetadataTooLong",
             "msg": "Metadata too long"
         },
         {
-            "code": 6003,
+            "code": 6004,
             "name": "InvalidExpiryTime",
             "msg": "Invalid expiry time"
         },
         {
-            "code": 6004,
+            "code": 6005,
             "name": "WagerNotOpen",
             "msg": "Wager not open"
         },
         {
-            "code": 6005,
+            "code": 6006,
             "name": "WagerExpired",
             "msg": "Wager expired"
         },
         {
-            "code": 6006,
+            "code": 6007,
             "name": "CannotAcceptOwnWager",
             "msg": "Cannot accept own wager"
         },
         {
-            "code": 6007,
+            "code": 6008,
             "name": "WagerNotActive",
             "msg": "Wager not active"
         },
         {
-            "code": 6008,
+            "code": 6009,
             "name": "WagerNotAccepted",
             "msg": "Wager not accepted"
         },
         {
-            "code": 6009,
+            "code": 6010,
             "name": "AmountOverflow",
             "msg": "Amount overflow"
         },
         {
-            "code": 6010,
+            "code": 6011,
             "name": "WagerAlreadyAccepted",
             "msg": "Wager already accepted"
         },
         {
-            "code": 6011,
+            "code": 6012,
             "name": "WagerNotExpired",
             "msg": "Wager not expired"
         },
         {
-            "code": 6012,
+            "code": 6013,
             "name": "InvalidWagerStatus",
             "msg": "Invalid wager status"
         },
         {
-            "code": 6013,
+            "code": 6014,
             "name": "Unauthorized",
             "msg": "Unauthorized"
         },
         {
-            "code": 6014,
+            "code": 6015,
             "name": "InvalidWinnerAccount",
             "msg": "Invalid winner account"
         },
         {
-            "code": 6015,
+            "code": 6016,
             "name": "InvalidCreatorAccount",
             "msg": "Invalid creator account"
         },
         {
-            "code": 6016,
+            "code": 6017,
             "name": "InvalidAcceptorAccount",
             "msg": "Invalid acceptor account"
         },
         {
-            "code": 6017,
+            "code": 6018,
             "name": "InsufficientEscrowBalance",
             "msg": "Insufficient escrow balance"
         },
         {
-            "code": 6018,
+            "code": 6019,
             "name": "InsufficientAcceptorBalance",
             "msg": "Insufficient acceptor balance"
         },
         {
-            "code": 6019,
+            "code": 6020,
             "name": "InsufficientCreatorBalance",
             "msg": "Insufficient creator balance"
         }
