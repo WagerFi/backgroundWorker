@@ -1265,19 +1265,14 @@ async function executeEnhancedWagerResolution(wager, winnerPosition, wagerType, 
                 console.log(`   Acceptor Referrer: ${acceptorReferrer.address} (${acceptorReferrer.percentage}%)`);
             }
 
-            // Execute the enhanced resolve_wager_with_referrals instruction with referral data
-            const transaction = await executeProgramInstruction('resolve_wager_with_referrals', {
+            // TEMPORARY: Use the working resolveWager instruction for testing
+            const transaction = await executeProgramInstruction('resolveWager', {
                 wagerId: wagerData.wager_id,
                 escrowPda: wagerData.escrow_pda,
                 winnerPubkey: winnerWallet.toString(),
-                creatorPubkey: wagerData.creator_address, // Add creator account for rent reclaim
-                treasuryPubkey: TREASURY_WALLET.toString(),
-                creatorReferrerPubkey: creatorReferrer?.address || TREASURY_WALLET.toString(),
-                acceptorReferrerPubkey: acceptorReferrer?.address || TREASURY_WALLET.toString()
+                treasuryPubkey: TREASURY_WALLET.toString()
             }, {
-                winner: winnerPosition,
-                creatorReferrerPercentage: creatorReferrer?.percentage || 0,
-                acceptorReferrerPercentage: acceptorReferrer?.percentage || 0
+                winner: winnerPosition
             });
 
             console.log(`✅ Enhanced on-chain resolution completed: ${transaction}`);
