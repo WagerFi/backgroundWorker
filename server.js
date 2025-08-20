@@ -310,6 +310,30 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     return value;
                 }, 2));
 
+                console.log(`🔍 Authority keypair debug:`);
+                console.log(`  Type: ${typeof authorityKeypair}`);
+                console.log(`  Public key: ${authorityKeypair.publicKey.toString()}`);
+                console.log(`  Has signTransaction: ${typeof authorityKeypair.signTransaction === 'function'}`);
+                console.log(`  Signers array: [${authorityKeypair.publicKey.toString()}]`);
+
+                // Test if we can create a simple transaction with this keypair
+                try {
+                    const testTx = new Transaction();
+                    testTx.add(SystemProgram.transfer({
+                        fromPubkey: authorityKeypair.publicKey,
+                        toPubkey: authorityKeypair.publicKey,
+                        lamports: 0
+                    }));
+                    testTx.feePayer = authorityKeypair.publicKey;
+                    testTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+
+                    // Try to sign it
+                    testTx.sign(authorityKeypair);
+                    console.log(`✅ Keypair signing test passed`);
+                } catch (signError) {
+                    console.error(`❌ Keypair signing test failed:`, signError);
+                }
+
                 result = await anchorProgram.methods
                     .resolveWagerWithReferrals(
                         { [args.winner.toLowerCase()]: {} },
