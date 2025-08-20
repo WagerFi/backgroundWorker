@@ -248,15 +248,14 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     winner: new PublicKey(accounts.winnerPubkey),
                     treasury: new PublicKey(accounts.treasuryPubkey),
                     authority: authorityKeypair.publicKey,
+                    // Always provide referrer accounts - use treasury as placeholder for null referrers
+                    creatorReferrer: accounts.creatorReferrerPubkey ?
+                        new PublicKey(accounts.creatorReferrerPubkey) :
+                        new PublicKey(accounts.treasuryPubkey), // Use treasury as placeholder
+                    acceptorReferrer: accounts.acceptorReferrerPubkey ?
+                        new PublicKey(accounts.acceptorReferrerPubkey) :
+                        new PublicKey(accounts.treasuryPubkey) // Use treasury as placeholder
                 };
-
-                // Add optional referrer accounts if they exist
-                if (accounts.creatorReferrerPubkey) {
-                    enhancedAccounts.creatorReferrer = new PublicKey(accounts.creatorReferrerPubkey);
-                }
-                if (accounts.acceptorReferrerPubkey) {
-                    enhancedAccounts.acceptorReferrer = new PublicKey(accounts.acceptorReferrerPubkey);
-                }
 
                 result = await anchorProgram.methods
                     .resolveWagerWithReferrals(
@@ -3519,8 +3518,15 @@ async function expireExpiredWagers() {
         if (cryptoFetchError) {
             console.error('❌ Error fetching crypto wagers to expire:', cryptoFetchError);
         } else if (cryptoWagersToExpire && cryptoWagersToExpire.length > 0) {
-            // Update each wager individually to preserve metadata
+            // Only cancel unaccepted wagers (open/matched), leave active wagers for resolution
             for (const wager of cryptoWagersToExpire) {
+                // Active wagers should be resolved, not cancelled
+                if (wager.status === 'active') {
+                    console.log(`⏰ Skipping cancellation for active crypto wager ${wager.id} - will be resolved instead`);
+                    continue;
+                }
+
+                // Cancel open/matched wagers that never got accepted
                 const currentMetadata = wager.metadata || {};
                 const updatedMetadata = {
                     ...currentMetadata,
@@ -3540,6 +3546,7 @@ async function expireExpiredWagers() {
                 if (updateError) {
                     console.error(`❌ Error updating crypto wager ${wager.id}:`, updateError);
                 } else {
+                    console.log(`✅ Cancelled unaccepted crypto wager ${wager.id} (status: ${wager.status})`);
                     totalExpired++;
                 }
             }
@@ -3569,8 +3576,15 @@ async function expireExpiredWagers() {
         if (sportsFetchError) {
             console.error('❌ Error fetching sports wagers to expire:', sportsFetchError);
         } else if (sportsWagersToExpire && sportsWagersToExpire.length > 0) {
-            // Update each wager individually to preserve metadata
+            // Only cancel unaccepted wagers (open/matched), leave active wagers for resolution
             for (const wager of sportsWagersToExpire) {
+                // Active wagers should be resolved, not cancelled
+                if (wager.status === 'active') {
+                    console.log(`⏰ Skipping cancellation for active sports wager ${wager.id} - will be resolved instead`);
+                    continue;
+                }
+
+                // Cancel open/matched wagers that never got accepted
                 const currentMetadata = wager.metadata || {};
                 const updatedMetadata = {
                     ...currentMetadata,
@@ -3590,6 +3604,7 @@ async function expireExpiredWagers() {
                 if (updateError) {
                     console.error(`❌ Error updating sports wager ${wager.id}:`, updateError);
                 } else {
+                    console.log(`✅ Cancelled unaccepted sports wager ${wager.id} (status: ${wager.status})`);
                     totalExpired++;
                 }
             }
