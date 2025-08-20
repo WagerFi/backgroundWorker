@@ -110,6 +110,64 @@
             ]
         },
         {
+            "name": "resolveWagerWithReferrals",
+            "accounts": [
+                {
+                    "name": "wager",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "escrow",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "winner",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "treasury",
+                    "isMut": true,
+                    "isSigner": false
+                },
+                {
+                    "name": "authority",
+                    "isMut": true,
+                    "isSigner": true
+                },
+                {
+                    "name": "creatorReferrer",
+                    "isMut": true,
+                    "isSigner": false,
+                    "isOptional": true
+                },
+                {
+                    "name": "acceptorReferrer",
+                    "isMut": true,
+                    "isSigner": false,
+                    "isOptional": true
+                }
+            ],
+            "args": [
+                {
+                    "name": "winner",
+                    "type": {
+                        "defined": "WinnerType"
+                    }
+                },
+                {
+                    "name": "creatorReferrerPercentage",
+                    "type": "u8"
+                },
+                {
+                    "name": "acceptorReferrerPercentage",
+                    "type": "u8"
+                }
+            ]
+        },
+        {
             "name": "cancelWager",
             "accounts": [
                 {
