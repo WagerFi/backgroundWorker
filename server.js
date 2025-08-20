@@ -226,6 +226,49 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     .rpc();
                 break;
 
+            case 'resolve_wager_with_referrals':
+                console.log(`🔍 Deriving correct PDAs for resolve_wager_with_referrals`);
+                const enhancedWagerPDA = PublicKey.findProgramAddressSync(
+                    [Buffer.from("wager"), Buffer.from(accounts.wagerId)],
+                    WAGERFI_PROGRAM_ID
+                )[0];
+                const enhancedEscrowPDA = new PublicKey(accounts.escrowPda);
+
+                console.log(`🔍 Wager account (derived): ${enhancedWagerPDA.toString()}`);
+                console.log(`🔍 Escrow account (from DB): ${enhancedEscrowPDA.toString()}`);
+                console.log(`🔍 Winner: ${accounts.winnerPubkey}`);
+                console.log(`🔍 Treasury: ${accounts.treasuryPubkey}`);
+                console.log(`🔍 Creator Referrer: ${accounts.creatorReferrerPubkey || 'None'}`);
+                console.log(`🔍 Acceptor Referrer: ${accounts.acceptorReferrerPubkey || 'None'}`);
+
+                // Build accounts object
+                const enhancedAccounts = {
+                    wager: enhancedWagerPDA,
+                    escrow: enhancedEscrowPDA,
+                    winner: new PublicKey(accounts.winnerPubkey),
+                    treasury: new PublicKey(accounts.treasuryPubkey),
+                    authority: authorityKeypair.publicKey,
+                };
+
+                // Add optional referrer accounts if they exist
+                if (accounts.creatorReferrerPubkey) {
+                    enhancedAccounts.creatorReferrer = new PublicKey(accounts.creatorReferrerPubkey);
+                }
+                if (accounts.acceptorReferrerPubkey) {
+                    enhancedAccounts.acceptorReferrer = new PublicKey(accounts.acceptorReferrerPubkey);
+                }
+
+                result = await anchorProgram.methods
+                    .resolveWagerWithReferrals(
+                        { [args.winner.toLowerCase()]: {} },
+                        args.creatorReferrerPercentage || 0,
+                        args.acceptorReferrerPercentage || 0
+                    )
+                    .accounts(enhancedAccounts)
+                    .signers([authorityKeypair])
+                    .rpc();
+                break;
+
             default:
                 throw new Error(`Unsupported instruction: ${instructionName}`);
         }
