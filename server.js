@@ -237,6 +237,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 console.log(`🔍 Wager account (derived): ${enhancedWagerPDA.toString()}`);
                 console.log(`🔍 Escrow account (from DB): ${enhancedEscrowPDA.toString()}`);
                 console.log(`🔍 Winner: ${accounts.winnerPubkey}`);
+                console.log(`🔍 Creator: ${accounts.creatorPubkey}`);
                 console.log(`🔍 Treasury: ${accounts.treasuryPubkey}`);
                 console.log(`🔍 Creator Referrer: ${accounts.creatorReferrerPubkey || 'None'}`);
                 console.log(`🔍 Acceptor Referrer: ${accounts.acceptorReferrerPubkey || 'None'}`);
@@ -248,6 +249,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     wager: enhancedWagerPDA,
                     escrow: enhancedEscrowPDA,
                     winner: new PublicKey(accounts.winnerPubkey),
+                    creator: new PublicKey(accounts.creatorPubkey), // Add creator for rent reclaim
                     treasury: new PublicKey(accounts.treasuryPubkey),
                     // Always provide both referrer accounts (use treasury as placeholder when none exists)
                     creatorReferrer: accounts.creatorReferrerPubkey ?
@@ -1022,6 +1024,18 @@ async function resolveWagerWithReferrals(wager, winnerPosition, wagerType) {
     try {
         console.log(`🎯 Resolving ${wagerType} wager with atomic referral processing: ${wager.wager_id}`);
 
+        // Prevent double execution by checking if already resolved
+        const { data: currentWager, error: checkError } = await supabase
+            .from(wagerType === 'crypto' ? 'crypto_wagers' : 'sports_wagers')
+            .select('status')
+            .eq('wager_id', wager.wager_id)
+            .single();
+
+        if (checkError || currentWager?.status === 'resolved') {
+            console.log(`⚠️ Wager ${wager.wager_id} already resolved or not found, skipping...`);
+            return;
+        }
+
         // 1. Get referral information for both participants
         const { creatorReferrer, acceptorReferrer } = await getWagerReferralInfo(
             wager.creator_address,
@@ -1135,6 +1149,7 @@ async function executeEnhancedWagerResolution(wager, winnerPosition, wagerType, 
                 wagerId: wagerData.wager_id,
                 escrowPda: wagerData.escrow_pda,
                 winnerPubkey: winnerWallet.toString(),
+                creatorPubkey: wagerData.creator_address, // Add creator account for rent reclaim
                 treasuryPubkey: TREASURY_WALLET.toString(),
                 creatorReferrerPubkey: creatorReferrer?.address || null,
                 acceptorReferrerPubkey: acceptorReferrer?.address || null
@@ -1223,13 +1238,15 @@ async function updateReferrerStats(wagererAddress, wagerAmount, commissionAmount
         });
 
         // Check for level upgrade thresholds: 30 SOL (L2), 100 SOL (L3), 250 SOL (L4)
-        let newLevel = currentReferrer.referral_level || 1;
+        const currentLevel = currentReferrer.referral_level || 1;
+        let newLevel = currentLevel;
+
         if (newTradeVol >= 250) newLevel = 4; // Titan
         else if (newTradeVol >= 100) newLevel = 3; // Rainmaker  
         else if (newTradeVol >= 30) newLevel = 2; // Influencer
         else newLevel = 1; // Recruiter
 
-        if (newLevel !== currentReferrer.referral_level) {
+        if (newLevel > currentLevel) { // Only upgrade, never downgrade
             const { error: levelError } = await supabase
                 .from('users')
                 .update({ referral_level: newLevel })
@@ -1240,7 +1257,7 @@ async function updateReferrerStats(wagererAddress, wagerAmount, commissionAmount
                 const levelEmojis = { 1: '🔥', 2: '🌟', 3: '⚡', 4: '🏆' };
                 const levelPercentages = { 1: '10%', 2: '15%', 3: '20%', 4: '25%' };
 
-                console.log(`🎉 LEVEL UP! ${referrerAddress} promoted to Level ${newLevel} (${levelNames[newLevel]}) with ${newTradeVol} SOL volume`);
+                console.log(`🎉 LEVEL UP! ${referrerAddress} promoted from Level ${currentLevel} to Level ${newLevel} (${levelNames[newLevel]}) with ${newTradeVol} SOL volume`);
 
                 // Create level-up notification
                 const { data: referrerUser, error: fetchReferrerError } = await supabase
@@ -1252,10 +1269,11 @@ async function updateReferrerStats(wagererAddress, wagerAmount, commissionAmount
                 if (!fetchReferrerError && referrerUser) {
                     await createNotification(
                         referrerUser.id,
-                        'level_upgrade',
+                        'wager_resolved', // Use existing valid notification type
                         `${levelEmojis[newLevel]} Level Up! You're now a ${levelNames[newLevel]}!`,
                         `Congratulations! You've reached Level ${newLevel} (${levelNames[newLevel]}) and now earn ${levelPercentages[newLevel]} commission on all referral trades. Your referral volume: ${newTradeVol} SOL`,
                         {
+                            type: 'level_upgrade',
                             new_level: newLevel,
                             level_name: levelNames[newLevel],
                             level_emoji: levelEmojis[newLevel],
@@ -1274,6 +1292,8 @@ async function updateReferrerStats(wagererAddress, wagerAmount, commissionAmount
         console.error(`❌ Error in updateReferrerStats:`, error);
     }
 }
+
+
 
 // 3. Cancel Wager (Database Status Update + Background Refund)
 app.post('/cancel-wager', async (req, res) => {
