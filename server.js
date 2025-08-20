@@ -244,6 +244,49 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 // Build accounts object - follow the EXACT order from exported IDL
                 // NOTE: Even though IDL says "isOptional: true", Anchor JS client requires all accounts
                 // So we use treasury as placeholder when referrers don't exist (percentage = 0)
+
+                // Validate all addresses before creating PublicKey objects
+                console.log(`🔍 Validating addresses before PublicKey creation:`);
+                console.log(`  Winner: ${accounts.winnerPubkey}`);
+                console.log(`  Creator: ${accounts.creatorPubkey}`);
+                console.log(`  Treasury: ${accounts.treasuryPubkey}`);
+                console.log(`  Creator Referrer: ${accounts.creatorReferrerPubkey || 'None'}`);
+                console.log(`  Acceptor Referrer: ${accounts.acceptorReferrerPubkey || 'None'}`);
+
+                // Validate that all addresses are valid Solana addresses
+                const validateAddress = (address, name) => {
+                    if (!address) {
+                        throw new Error(`${name} address is undefined or null`);
+                    }
+                    if (typeof address !== 'string') {
+                        throw new Error(`${name} address is not a string: ${typeof address}`);
+                    }
+                    if (address.length < 32 || address.length > 44) {
+                        throw new Error(`${name} address length is invalid: ${address.length} (${address})`);
+                    }
+                    // Check if it contains only valid base58 characters
+                    if (!/^[1-9A-HJ-NP-Za-km-z]+$/.test(address)) {
+                        throw new Error(`${name} address contains invalid characters: ${address}`);
+                    }
+                    return true;
+                };
+
+                try {
+                    validateAddress(accounts.winnerPubkey, 'Winner');
+                    validateAddress(accounts.creatorPubkey, 'Creator');
+                    validateAddress(accounts.treasuryPubkey, 'Treasury');
+                    if (accounts.creatorReferrerPubkey) {
+                        validateAddress(accounts.creatorReferrerPubkey, 'Creator Referrer');
+                    }
+                    if (accounts.acceptorReferrerPubkey) {
+                        validateAddress(accounts.acceptorReferrerPubkey, 'Acceptor Referrer');
+                    }
+                    console.log(`✅ All addresses validated successfully`);
+                } catch (validationError) {
+                    console.error(`❌ Address validation failed:`, validationError.message);
+                    throw validationError;
+                }
+
                 const enhancedAccounts = {
                     wager: enhancedWagerPDA,
                     escrow: enhancedEscrowPDA,
