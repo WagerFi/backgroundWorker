@@ -1189,7 +1189,8 @@ async function resolveWagerWithReferrals(wager, winnerPosition, wagerType) {
         }
 
         // 5. Update user stats
-        await updateWagerUserStats(wager, winnerPosition, wagerType);
+        const winnerId = winnerPosition === 'creator' ? wager.creator_id : wager.acceptor_id;
+        await updateWagerUserStats(wager, winnerId, winnerPosition, wagerType);
 
         console.log(`✅ Wager resolved with atomic referral payouts: ${wager.wager_id}`);
 
@@ -1265,14 +1266,19 @@ async function executeEnhancedWagerResolution(wager, winnerPosition, wagerType, 
                 console.log(`   Acceptor Referrer: ${acceptorReferrer.address} (${acceptorReferrer.percentage}%)`);
             }
 
-            // TEMPORARY: Use the working resolveWager instruction for testing
-            const transaction = await executeProgramInstruction('resolveWager', {
+            // Execute the enhanced resolve_wager_with_referrals instruction with referral data
+            const transaction = await executeProgramInstruction('resolve_wager_with_referrals', {
                 wagerId: wagerData.wager_id,
                 escrowPda: wagerData.escrow_pda,
                 winnerPubkey: winnerWallet.toString(),
-                treasuryPubkey: TREASURY_WALLET.toString()
+                creatorPubkey: wagerData.creator_address, // Add creator account for rent reclaim
+                treasuryPubkey: TREASURY_WALLET.toString(),
+                creatorReferrerPubkey: creatorReferrer?.address || TREASURY_WALLET.toString(),
+                acceptorReferrerPubkey: acceptorReferrer?.address || TREASURY_WALLET.toString()
             }, {
-                winner: winnerPosition
+                winner: winnerPosition,
+                creatorReferrerPercentage: creatorReferrer?.percentage || 0,
+                acceptorReferrerPercentage: acceptorReferrer?.percentage || 0
             });
 
             console.log(`✅ Enhanced on-chain resolution completed: ${transaction}`);
