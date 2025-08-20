@@ -242,18 +242,20 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 console.log(`🔍 Acceptor Referrer: ${accounts.acceptorReferrerPubkey || 'None'}`);
 
                 // Build accounts object - follow the EXACT order from exported IDL
+                // NOTE: Even though IDL says "isOptional: true", Anchor JS client requires all accounts
+                // So we use treasury as placeholder when referrers don't exist (percentage = 0)
                 const enhancedAccounts = {
                     wager: enhancedWagerPDA,
                     escrow: enhancedEscrowPDA,
                     winner: new PublicKey(accounts.winnerPubkey),
                     treasury: new PublicKey(accounts.treasuryPubkey),
-                    // Optional referrer accounts - only add if they exist (isOptional: true)
-                    ...(accounts.creatorReferrerPubkey && {
-                        creatorReferrer: new PublicKey(accounts.creatorReferrerPubkey)
-                    }),
-                    ...(accounts.acceptorReferrerPubkey && {
-                        acceptorReferrer: new PublicKey(accounts.acceptorReferrerPubkey)
-                    }),
+                    // Always provide both referrer accounts (use treasury as placeholder when none exists)
+                    creatorReferrer: accounts.creatorReferrerPubkey ?
+                        new PublicKey(accounts.creatorReferrerPubkey) :
+                        new PublicKey(accounts.treasuryPubkey), // Treasury placeholder (gets 0%)
+                    acceptorReferrer: accounts.acceptorReferrerPubkey ?
+                        new PublicKey(accounts.acceptorReferrerPubkey) :
+                        new PublicKey(accounts.treasuryPubkey), // Treasury placeholder (gets 0%)
                     authority: authorityKeypair.publicKey,
                 };
 
