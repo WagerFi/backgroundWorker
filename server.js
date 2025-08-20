@@ -1237,7 +1237,36 @@ async function updateReferrerStats(wagererAddress, wagerAmount, commissionAmount
 
             if (!levelError) {
                 const levelNames = { 1: 'Recruiter', 2: 'Influencer', 3: 'Rainmaker', 4: 'Titan' };
+                const levelEmojis = { 1: '🔥', 2: '🌟', 3: '⚡', 4: '🏆' };
+                const levelPercentages = { 1: '10%', 2: '15%', 3: '20%', 4: '25%' };
+
                 console.log(`🎉 LEVEL UP! ${referrerAddress} promoted to Level ${newLevel} (${levelNames[newLevel]}) with ${newTradeVol} SOL volume`);
+
+                // Create level-up notification
+                const { data: referrerUser, error: fetchReferrerError } = await supabase
+                    .from('users')
+                    .select('id')
+                    .eq('wallet_address', referrerAddress)
+                    .single();
+
+                if (!fetchReferrerError && referrerUser) {
+                    await createNotification(
+                        referrerUser.id,
+                        'level_upgrade',
+                        `${levelEmojis[newLevel]} Level Up! You're now a ${levelNames[newLevel]}!`,
+                        `Congratulations! You've reached Level ${newLevel} (${levelNames[newLevel]}) and now earn ${levelPercentages[newLevel]} commission on all referral trades. Your referral volume: ${newTradeVol} SOL`,
+                        {
+                            new_level: newLevel,
+                            level_name: levelNames[newLevel],
+                            level_emoji: levelEmojis[newLevel],
+                            commission_rate: levelPercentages[newLevel],
+                            total_volume: newTradeVol,
+                            animation_trigger: true // Trigger frontend animation
+                        }
+                    );
+
+                    console.log(`📬 Level-up notification sent to ${referrerAddress}`);
+                }
             }
         }
 
