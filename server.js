@@ -609,23 +609,6 @@ app.post('/admin/distribute-buyback', async (req, res) => {
     }
 });
 
-app.post('/admin/force-daily-calculation', async (req, res) => {
-    try {
-        console.log('🔄 Manual daily calculation triggered');
-
-        await calculateDailyRewards();
-        await scheduleNextDayRewards();
-
-        res.json({
-            success: true,
-            message: 'Daily calculation completed manually',
-            timestamp: new Date().toISOString()
-        });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
 app.get('/admin/treasury-balance', async (req, res) => {
     try {
         const balance = await getTreasuryBalance();
@@ -4725,21 +4708,12 @@ async function calculateDailyRewards() {
 
         console.log(`📊 Daily earnings: ${dailyEarnings} SOL`);
 
-        // Calculate reward budget (20% of today's earnings since this is the first run)
-        let rewardBudget = 0;
+        // Calculate reward budget (20% of yesterday's earnings)
+        const { data: rewardBudgetResult, error: budgetError } = await supabase.rpc('calculate_daily_reward_budget', {
+            target_date: today
+        });
 
-        if (dailyEarnings > 0) {
-            // For the first run, use today's earnings
-            rewardBudget = dailyEarnings * 0.20;
-            console.log(`🎁 Calculated reward budget: ${dailyEarnings} SOL × 20% = ${rewardBudget} SOL`);
-        } else {
-            // Try to get from database function as fallback
-            const { data: rewardBudgetResult, error: budgetError } = await supabase.rpc('calculate_daily_reward_budget', {
-                target_date: today
-            });
-            rewardBudget = budgetError ? 0 : (rewardBudgetResult || 0);
-            console.log(`🎁 Reward budget from database: ${rewardBudget} SOL`);
-        }
+        const rewardBudget = budgetError ? 0 : (rewardBudgetResult || 0);
 
         console.log(`🎁 Reward budget for today: ${rewardBudget} SOL`);
 
@@ -5223,28 +5197,14 @@ function shuffleArray(array) {
 // REWARD SYSTEM CRON JOBS
 // ============================================================================
 
-// Daily calculation at 11:59 PM (with fallback)
+// Daily calculation at 11:59 PM
 setInterval(async () => {
     const now = new Date();
-    const currentHour = now.getHours();
-    const currentMinute = now.getMinutes();
+    const isTime = now.getHours() === 23 && now.getMinutes() === 59;
 
-    // Check if it's time for daily calculation (11:59 PM)
-    const isTime = currentHour === 23 && currentMinute === 59;
-
-    // Also check if we missed yesterday's calculation (12:00 AM - 1:00 AM)
-    const isFallbackTime = currentHour === 0 && currentMinute <= 5;
-
-    if (isTime || isFallbackTime) {
-        console.log(`🕐 Daily rewards calculation triggered: ${isTime ? 'On time' : 'Fallback'} at ${currentHour}:${currentMinute.toString().padStart(2, '0')}`);
-
-        try {
-            await calculateDailyRewards();
-            await scheduleNextDayRewards(); // Schedule tomorrow's gradual distribution
-            console.log('✅ Daily rewards calculation completed successfully');
-        } catch (error) {
-            console.error('❌ Error in daily rewards calculation:', error);
-        }
+    if (isTime) {
+        await calculateDailyRewards();
+        await scheduleNextDayRewards(); // Schedule tomorrow's gradual distribution
     }
 }, 60000); // Check every minute
 
