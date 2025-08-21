@@ -3801,8 +3801,9 @@ async function updateWagerUserStats(wager, winnerId, winnerPosition, wagerType =
 
         console.log(`✅ Stats updated for both users`);
 
-        // Check for milestone rewards (50th, 250th, 500th wager of the day)
-        await checkMilestoneRewards(acceptorId, wager.wager_id);
+        // Check for milestone rewards (new 10-milestone system: 1st, 10th, 20th, 30th, 40th, 50th, 75th, 100th, 125th, 150th)
+        // Each milestone: 1.5% total (0.75% creator + 0.75% acceptor)
+        await checkMilestoneRewards(creatorId, acceptorId, wager.wager_id);
 
     } catch (error) {
         console.error('❌ Error updating wager user stats:', error);
@@ -4490,22 +4491,44 @@ app.listen(PORT, () => {
 // REWARD SYSTEM IMPLEMENTATION
 // ============================================================================
 
-// Check and award milestone rewards (50th, 250th, 500th wager of the day)
-async function checkMilestoneRewards(userId, wagerId) {
+// Check and award milestone rewards for new 10-milestone system
+// Each milestone: 1.5% total (0.75% creator + 0.75% acceptor)
+async function checkMilestoneRewards(creatorId, acceptorId, wagerId) {
     try {
-        const { data: result, error } = await supabase.rpc('increment_daily_wager_count', {
-            p_user_id: userId,
-            p_wager_id: wagerId
-        });
+        // Get today's wager count and milestone status
+        const today = new Date().toISOString().split('T')[0];
+        const { data: wagerCount, error: countError } = await supabase
+            .from('daily_wager_counts')
+            .select('*')
+            .eq('wager_date', today)
+            .single();
 
-        if (error) {
-            console.error('❌ Error checking milestone rewards:', error);
+        if (countError || !wagerCount) {
+            console.error('❌ Error getting daily wager count:', countError);
             return;
         }
 
-        if (result.milestone_reached) {
-            console.log(`🎉 MILESTONE REACHED! ${result.milestone_reached} wager by user ${userId}`);
-            await scheduleMilestoneReward(userId, result.milestone_reached, result.wager_count);
+        // Check which milestones were just reached
+        const currentCount = wagerCount.wager_count;
+        const milestones = [
+            { count: 1, name: '1st', reached: wagerCount.milestone_1_reached },
+            { count: 10, name: '10th', reached: wagerCount.milestone_10_reached },
+            { count: 20, name: '20th', reached: wagerCount.milestone_20_reached },
+            { count: 30, name: '30th', reached: wagerCount.milestone_30_reached },
+            { count: 40, name: '40th', reached: wagerCount.milestone_40_reached },
+            { count: 50, name: '50th', reached: wagerCount.milestone_50_reached },
+            { count: 75, name: '75th', reached: wagerCount.milestone_75_reached },
+            { count: 100, name: '100th', reached: wagerCount.milestone_100_reached },
+            { count: 125, name: '125th', reached: wagerCount.milestone_125_reached },
+            { count: 150, name: '150th', reached: wagerCount.milestone_150_reached }
+        ];
+
+        // Find newly reached milestones
+        for (const milestone of milestones) {
+            if (currentCount >= milestone.count && !milestone.reached) {
+                console.log(`🎉 MILESTONE REACHED! ${milestone.name} wager of the day (${currentCount} total)`);
+                await scheduleMilestoneReward(creatorId, acceptorId, milestone.name, currentCount);
+            }
         }
 
     } catch (error) {
@@ -4513,8 +4536,8 @@ async function checkMilestoneRewards(userId, wagerId) {
     }
 }
 
-// Schedule milestone reward for distribution
-async function scheduleMilestoneReward(userId, milestone, wagerCount) {
+// Schedule milestone reward for distribution (creator + acceptor split)
+async function scheduleMilestoneReward(creatorId, acceptorId, milestone, wagerCount) {
     try {
         // Get today's treasury snapshot
         const { data: snapshot, error: snapshotError } = await supabase
@@ -4528,46 +4551,81 @@ async function scheduleMilestoneReward(userId, milestone, wagerCount) {
             return;
         }
 
-        // Calculate reward amount (5% of daily reward budget)
-        const rewardPercentage = 5.0; // 5% for each milestone
-        const rewardAmount = (snapshot.reward_budget * rewardPercentage) / 100;
+        // Calculate reward amounts (1.5% total, split 0.75% each)
+        const totalRewardPercentage = 1.5; // 1.5% total for each milestone
+        const individualRewardPercentage = 0.75; // 0.75% for creator, 0.75% for acceptor
+        const totalRewardAmount = (snapshot.reward_budget * totalRewardPercentage) / 100;
+        const individualRewardAmount = totalRewardAmount / 2; // Split evenly
 
-        if (rewardAmount <= 0) {
+        if (totalRewardAmount <= 0) {
             console.log('⚠️ No reward budget available for milestone reward');
             return;
         }
 
-        // Get user details
-        const { data: user, error: userError } = await supabase
+        // Get creator details
+        const { data: creator, error: creatorError } = await supabase
             .from('users')
             .select('wallet_address')
-            .eq('id', userId)
+            .eq('id', creatorId)
             .single();
 
-        if (userError || !user) {
-            console.error('❌ Error getting user for milestone reward:', userError);
+        if (creatorError || !creator) {
+            console.error('❌ Error getting creator for milestone reward:', creatorError);
             return;
         }
 
-        // Create reward distribution record
-        const { error: rewardError } = await supabase
+        // Get acceptor details
+        const { data: acceptor, error: acceptorError } = await supabase
+            .from('users')
+            .select('wallet_address')
+            .eq('id', acceptorId)
+            .single();
+
+        if (acceptorError || !acceptor) {
+            console.error('❌ Error getting acceptor for milestone reward:', acceptorError);
+            return;
+        }
+
+        // Create reward distribution records for both users
+        const rewardType = `milestone_${milestone.replace('th', '')}`;
+
+        // Creator reward
+        const { error: creatorRewardError } = await supabase
             .from('reward_distributions')
             .insert({
                 snapshot_id: snapshot.id,
-                user_id: userId,
-                user_address: user.wallet_address,
-                reward_type: `milestone_${milestone.replace('th', '')}`,
-                reward_amount: rewardAmount,
-                reward_percentage: rewardPercentage,
+                user_id: creatorId,
+                user_address: creator.wallet_address,
+                reward_type: `${rewardType}_creator`,
+                reward_amount: individualRewardAmount,
+                reward_percentage: individualRewardPercentage,
                 wager_count_at_time: wagerCount
             });
 
-        if (rewardError) {
-            console.error('❌ Error creating milestone reward distribution:', rewardError);
+        if (creatorRewardError) {
+            console.error('❌ Error creating creator milestone reward distribution:', creatorRewardError);
             return;
         }
 
-        console.log(`✅ Scheduled ${milestone} milestone reward: ${rewardAmount} SOL for user ${userId}`);
+        // Acceptor reward
+        const { error: acceptorRewardError } = await supabase
+            .from('reward_distributions')
+            .insert({
+                snapshot_id: snapshot.id,
+                user_id: acceptorId,
+                user_address: acceptor.wallet_address,
+                reward_type: `${rewardType}_acceptor`,
+                reward_amount: individualRewardAmount,
+                reward_percentage: individualRewardPercentage,
+                wager_count_at_time: wagerCount
+            });
+
+        if (acceptorRewardError) {
+            console.error('❌ Error creating acceptor milestone reward distribution:', acceptorRewardError);
+            return;
+        }
+
+        console.log(`✅ Scheduled ${milestone} milestone rewards: ${individualRewardAmount.toFixed(6)} SOL each for creator and acceptor (${totalRewardAmount.toFixed(6)} SOL total)`);
 
         // Schedule immediate distribution
         await distributePendingRewards();
