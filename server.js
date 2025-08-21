@@ -4725,12 +4725,21 @@ async function calculateDailyRewards() {
 
         console.log(`📊 Daily earnings: ${dailyEarnings} SOL`);
 
-        // Calculate reward budget (20% of yesterday's earnings)
-        const { data: rewardBudgetResult, error: budgetError } = await supabase.rpc('calculate_daily_reward_budget', {
-            target_date: today
-        });
+        // Calculate reward budget (20% of today's earnings since this is the first run)
+        let rewardBudget = 0;
 
-        const rewardBudget = budgetError ? 0 : (rewardBudgetResult || 0);
+        if (dailyEarnings > 0) {
+            // For the first run, use today's earnings
+            rewardBudget = dailyEarnings * 0.20;
+            console.log(`🎁 Calculated reward budget: ${dailyEarnings} SOL × 20% = ${rewardBudget} SOL`);
+        } else {
+            // Try to get from database function as fallback
+            const { data: rewardBudgetResult, error: budgetError } = await supabase.rpc('calculate_daily_reward_budget', {
+                target_date: today
+            });
+            rewardBudget = budgetError ? 0 : (rewardBudgetResult || 0);
+            console.log(`🎁 Reward budget from database: ${rewardBudget} SOL`);
+        }
 
         console.log(`🎁 Reward budget for today: ${rewardBudget} SOL`);
 
