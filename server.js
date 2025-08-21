@@ -347,13 +347,14 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     authority: authorityKeypair.publicKey, // Use the original authority keypair to match the provider
                 };
 
-                // Only add referrer accounts if they exist and are different from treasury
-                if (accounts.creatorReferrerPubkey && accounts.creatorReferrerPubkey !== accounts.treasuryPubkey) {
-                    enhancedAccounts.creatorReferrer = new PublicKey(accounts.creatorReferrerPubkey);
-                }
-                if (accounts.acceptorReferrerPubkey && accounts.acceptorReferrerPubkey !== accounts.treasuryPubkey) {
-                    enhancedAccounts.acceptorReferrer = new PublicKey(accounts.acceptorReferrerPubkey);
-                }
+                // Always provide both referrer accounts - use treasury as placeholder when no referrer exists
+                enhancedAccounts.creatorReferrer = new PublicKey(accounts.creatorReferrerPubkey);
+                enhancedAccounts.acceptorReferrer = new PublicKey(accounts.acceptorReferrerPubkey);
+
+                console.log(`🔍 Referrer accounts added:`, {
+                    creatorReferrer: enhancedAccounts.creatorReferrer.toString(),
+                    acceptorReferrer: enhancedAccounts.acceptorReferrer.toString()
+                });
 
                 console.log(`🔍 Final enhancedAccounts object (with authority):`, JSON.stringify(enhancedAccounts, (key, value) => {
                     if (value && typeof value === 'object' && value.toBase58) {
