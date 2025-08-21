@@ -609,6 +609,23 @@ app.post('/admin/distribute-buyback', async (req, res) => {
     }
 });
 
+app.post('/admin/force-daily-calculation', async (req, res) => {
+    try {
+        console.log('🔄 Manual daily calculation triggered');
+
+        await calculateDailyRewards();
+        await scheduleNextDayRewards();
+
+        res.json({
+            success: true,
+            message: 'Daily calculation completed manually',
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 app.get('/admin/treasury-balance', async (req, res) => {
     try {
         const balance = await getTreasuryBalance();
@@ -5197,14 +5214,28 @@ function shuffleArray(array) {
 // REWARD SYSTEM CRON JOBS
 // ============================================================================
 
-// Daily calculation at 11:59 PM
+// Daily calculation at 11:59 PM (with fallback)
 setInterval(async () => {
     const now = new Date();
-    const isTime = now.getHours() === 23 && now.getMinutes() === 59;
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
 
-    if (isTime) {
-        await calculateDailyRewards();
-        await scheduleNextDayRewards(); // Schedule tomorrow's gradual distribution
+    // Check if it's time for daily calculation (11:59 PM)
+    const isTime = currentHour === 23 && currentMinute === 59;
+
+    // Also check if we missed yesterday's calculation (12:00 AM - 1:00 AM)
+    const isFallbackTime = currentHour === 0 && currentMinute <= 5;
+
+    if (isTime || isFallbackTime) {
+        console.log(`🕐 Daily rewards calculation triggered: ${isTime ? 'On time' : 'Fallback'} at ${currentHour}:${currentMinute.toString().padStart(2, '0')}`);
+
+        try {
+            await calculateDailyRewards();
+            await scheduleNextDayRewards(); // Schedule tomorrow's gradual distribution
+            console.log('✅ Daily rewards calculation completed successfully');
+        } catch (error) {
+            console.error('❌ Error in daily rewards calculation:', error);
+        }
     }
 }, 60000); // Check every minute
 
