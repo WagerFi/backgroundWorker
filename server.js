@@ -255,11 +255,8 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 break;
 
             case 'resolve_wager_with_referrals':
-                console.log(`🔍 Deriving correct PDAs for resolve_wager_with_referrals`);
-                const enhancedWagerPDA = PublicKey.findProgramAddressSync(
-                    [Buffer.from("wager"), Buffer.from(accounts.wagerId)],
-                    WAGERFI_PROGRAM_ID
-                )[0];
+                console.log(`🔍 Using correct PDAs for resolve_wager_with_referrals (same as working instructions)`);
+                const enhancedWagerPDA = new PublicKey(accounts.wagerId);
                 const enhancedEscrowPDA = new PublicKey(accounts.escrowPda);
 
                 console.log(`🔍 Wager account (derived): ${enhancedWagerPDA.toString()}`);
@@ -321,15 +318,17 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     winner: new PublicKey(accounts.winnerPubkey),
                     creator: new PublicKey(accounts.creatorPubkey), // Add creator for rent reclaim
                     treasury: new PublicKey(accounts.treasuryPubkey),
-                    // Always provide both referrer accounts (use treasury as placeholder when none exists)
-                    creatorReferrer: accounts.creatorReferrerPubkey ?
-                        new PublicKey(accounts.creatorReferrerPubkey) :
-                        new PublicKey(accounts.treasuryPubkey), // Treasury placeholder (gets 0%)
-                    acceptorReferrer: accounts.acceptorReferrerPubkey ?
-                        new PublicKey(accounts.acceptorReferrerPubkey) :
-                        new PublicKey(accounts.treasuryPubkey), // Treasury placeholder (gets 0%)
+
                     authority: authorityKeypair.publicKey, // Use the original authority keypair to match the provider
                 };
+
+                // Only add referrer accounts if they exist and are different from treasury
+                if (accounts.creatorReferrerPubkey && accounts.creatorReferrerPubkey !== accounts.treasuryPubkey) {
+                    enhancedAccounts.creatorReferrer = new PublicKey(accounts.creatorReferrerPubkey);
+                }
+                if (accounts.acceptorReferrerPubkey && accounts.acceptorReferrerPubkey !== accounts.treasuryPubkey) {
+                    enhancedAccounts.acceptorReferrer = new PublicKey(accounts.acceptorReferrerPubkey);
+                }
 
                 console.log(`🔍 Final enhancedAccounts object (with authority):`, JSON.stringify(enhancedAccounts, (key, value) => {
                     if (value && typeof value === 'object' && value.toBase58) {
@@ -387,7 +386,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                         args.acceptorReferrerPercentage || 0
                     )
                     .accounts(enhancedAccounts)
-                    .signers([authorityKeypair])  // Use the original authority keypair to match the provider
+                    .signers([authorityKeypair])  // Use the same pattern as working instructions
                     .rpc();
                 break;
 
