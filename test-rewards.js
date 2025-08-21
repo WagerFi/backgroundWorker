@@ -13,7 +13,7 @@
 import axios from 'axios';
 
 const BASE_URL = process.env.BACKGROUND_WORKER_URL || 'https://backgroundworker-11kk.onrender.com';
-const TEST_BUDGET = 5.0; // 5 SOL for testing
+const TEST_BUDGET = 4.0; // 4 SOL for testing (adjusted to available balance)
 
 async function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));

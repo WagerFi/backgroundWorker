@@ -657,10 +657,6 @@ app.post('/admin/test-rewards', async (req, res) => {
             console.log(`✅ Created new snapshot for today with budget: ${testBudget} SOL`);
         }
 
-        if (snapshotError) {
-            return res.status(500).json({ success: false, error: `Snapshot error: ${snapshotError.message}` });
-        }
-
         // Use existing snapshot budget or test budget
         const snapshotToUse = existingSnapshot || { id: null, reward_budget: testBudget };
         const budgetToUse = existingSnapshot ? existingSnapshot.reward_budget : testBudget;
