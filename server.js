@@ -4628,10 +4628,11 @@ async function calculateDailyRewards() {
     }
 }
 
-// Schedule random winners (10 winners x 2.5% = 25%) and micro-drops (100 drops = 35%)
+// Legacy immediate scheduling function - replaced by gradual distribution
+// This function is kept for manual testing via /admin/test-rewards endpoint
 async function scheduleRandomRewards(date, rewardBudget) {
     try {
-        console.log('🎲 Scheduling random rewards for the day...');
+        console.log('🎲 Scheduling immediate rewards for testing...');
 
         // Get today's snapshot
         const { data: snapshot, error: snapshotError } = await supabase
@@ -4657,23 +4658,32 @@ async function scheduleRandomRewards(date, rewardBudget) {
 
         console.log(`👥 Found ${eligibleUsers.length} eligible users for rewards`);
 
-        // Schedule 10 random winners (25% total = 2.5% each)
+        // Schedule immediate rewards for testing
         const randomWinnerReward = (rewardBudget * 25) / (100 * 10); // 25% ÷ 10 winners = 2.5% each
-        const selectedWinners = shuffleArray([...eligibleUsers]).slice(0, 10);
+        const selectedWinners = shuffleArray([...eligibleUsers]).slice(0, Math.min(10, eligibleUsers.length));
 
         for (const user of selectedWinners) {
             await createRewardDistribution(snapshot.id, user, 'random_winner', randomWinnerReward, 2.5);
         }
 
-        // Schedule 100 micro-drops (35% total = 0.35% each)
+        // Micro-drops for testing (limited to available users)
         const microDropReward = (rewardBudget * 35) / (100 * 100); // 35% ÷ 100 drops = 0.35% each
-        const microDropUsers = shuffleArray([...eligibleUsers]).slice(0, 100);
+        const microDropUsers = shuffleArray([...eligibleUsers]).slice(0, Math.min(100, eligibleUsers.length));
 
         for (const user of microDropUsers) {
             await createRewardDistribution(snapshot.id, user, 'micro_drop', microDropReward, 0.35);
         }
 
-        console.log(`✅ Scheduled ${selectedWinners.length} random winners and ${microDropUsers.length} micro-drops`);
+        // Immediate buyback for testing
+        const buybackAmount = (rewardBudget * 25) / 100; // 25% of reward budget
+        const buybackWallet = {
+            user_id: null, // Special case for buyback
+            wallet_address: 'FPBUsH6tJgRaUu6diyS2AuwvXESrA9MPqJ9cov15boPQ'
+        };
+
+        await createRewardDistribution(snapshot.id, buybackWallet, 'wager_buyback', buybackAmount, 25.0);
+
+        console.log(`✅ Scheduled ${selectedWinners.length} random winners, ${microDropUsers.length} micro-drops, and buyback (${buybackAmount.toFixed(6)} SOL) for immediate testing`);
 
     } catch (error) {
         console.error('❌ Error in scheduleRandomRewards:', error);
@@ -4687,7 +4697,7 @@ async function createRewardDistribution(snapshotId, user, rewardType, rewardAmou
             .from('reward_distributions')
             .insert({
                 snapshot_id: snapshotId,
-                user_id: user.user_id,
+                user_id: user.user_id || null, // Allow null for buyback
                 user_address: user.wallet_address,
                 reward_type: rewardType,
                 reward_amount: rewardAmount,
@@ -4720,10 +4730,40 @@ async function distributePendingRewards() {
 
         console.log(`💸 Distributing ${pendingRewards.length} pending rewards...`);
 
+        // Track amounts by reward type for treasury snapshot updates
+        let randomWinnersTotal = 0;
+        let milestoneRewardsTotal = 0;
+        let microDropsTotal = 0;
+        let buybackTotal = 0;
+        let totalDistributed = 0;
+        let successfulDistributions = 0;
+
         for (const reward of pendingRewards) {
-            await distributeReward(reward);
+            const success = await distributeReward(reward);
+            if (success) {
+                successfulDistributions++;
+                totalDistributed += parseFloat(reward.reward_amount);
+
+                // Track by reward type
+                if (reward.reward_type === 'random_winner') {
+                    randomWinnersTotal += parseFloat(reward.reward_amount);
+                } else if (reward.reward_type.startsWith('milestone_')) {
+                    milestoneRewardsTotal += parseFloat(reward.reward_amount);
+                } else if (reward.reward_type === 'micro_drop') {
+                    microDropsTotal += parseFloat(reward.reward_amount);
+                } else if (reward.reward_type === 'wager_buyback') {
+                    buybackTotal += parseFloat(reward.reward_amount);
+                }
+            }
             await new Promise(resolve => setTimeout(resolve, 100)); // Small delay between transactions
         }
+
+        // Update treasury snapshot with distributed amounts
+        if (successfulDistributions > 0) {
+            await updateTreasurySnapshot(randomWinnersTotal, milestoneRewardsTotal, microDropsTotal, buybackTotal, totalDistributed);
+        }
+
+        console.log(`✅ Successfully distributed ${successfulDistributions}/${pendingRewards.length} rewards totaling ${totalDistributed.toFixed(6)} SOL`);
 
     } catch (error) {
         console.error('❌ Error in distributePendingRewards:', error);
@@ -4770,6 +4810,7 @@ async function distributeReward(reward) {
 
         if (updateError) {
             console.error('❌ Error updating reward distribution record:', updateError);
+            return false;
         } else {
             console.log(`✅ Reward distributed: ${signature}`);
         }
@@ -4787,6 +4828,8 @@ async function distributeReward(reward) {
             }
         });
 
+        return true; // Success
+
     } catch (error) {
         console.error(`❌ Error distributing reward ${reward.id}:`, error);
 
@@ -4797,6 +4840,53 @@ async function distributeReward(reward) {
                 distribution_error: error.message
             })
             .eq('id', reward.id);
+
+        return false; // Failure
+    }
+}
+
+// Update treasury snapshot with distributed reward amounts
+async function updateTreasurySnapshot(randomWinnersTotal, milestoneRewardsTotal, microDropsTotal, buybackTotal, totalDistributed) {
+    try {
+        const today = new Date().toISOString().split('T')[0];
+
+        // Get current snapshot
+        const { data: snapshot, error: fetchError } = await supabase
+            .from('treasury_daily_snapshots')
+            .select('*')
+            .eq('snapshot_date', today)
+            .single();
+
+        if (fetchError || !snapshot) {
+            console.error('❌ Error fetching treasury snapshot for update:', fetchError);
+            return;
+        }
+
+        // Update the snapshot with distributed amounts
+        const { error: updateError } = await supabase
+            .from('treasury_daily_snapshots')
+            .update({
+                reward_budget_used: (parseFloat(snapshot.reward_budget_used) + totalDistributed).toFixed(8),
+                random_winners_distributed: (parseFloat(snapshot.random_winners_distributed) + randomWinnersTotal).toFixed(8),
+                milestone_rewards_distributed: (parseFloat(snapshot.milestone_rewards_distributed) + milestoneRewardsTotal).toFixed(8),
+                micro_drops_distributed: (parseFloat(snapshot.micro_drops_distributed) + microDropsTotal).toFixed(8),
+                wager_buyback_amount: (parseFloat(snapshot.wager_buyback_amount) + buybackTotal).toFixed(8),
+                updated_at: new Date().toISOString()
+            })
+            .eq('snapshot_date', today);
+
+        if (updateError) {
+            console.error('❌ Error updating treasury snapshot:', updateError);
+        } else {
+            console.log(`📊 Treasury snapshot updated: ${totalDistributed.toFixed(6)} SOL distributed`);
+            console.log(`   Random Winners: ${randomWinnersTotal.toFixed(6)} SOL`);
+            console.log(`   Milestones: ${milestoneRewardsTotal.toFixed(6)} SOL`);
+            console.log(`   Micro-Drops: ${microDropsTotal.toFixed(6)} SOL`);
+            console.log(`   Buyback: ${buybackTotal.toFixed(6)} SOL`);
+        }
+
+    } catch (error) {
+        console.error('❌ Error in updateTreasurySnapshot:', error);
     }
 }
 
@@ -4821,15 +4911,275 @@ setInterval(async () => {
 
     if (isTime) {
         await calculateDailyRewards();
+        await scheduleNextDayRewards(); // Schedule tomorrow's gradual distribution
     }
 }, 60000); // Check every minute
 
-// Distribute pending rewards every 5 minutes
+// Gradual reward distribution system
+setInterval(async () => {
+    await processScheduledRewards();
+}, 60000); // Check every minute for scheduled distributions
+
+// Emergency fallback - distribute any remaining pending rewards
 setInterval(async () => {
     await distributePendingRewards();
-}, 5 * 60 * 1000);
+}, 30 * 60 * 1000); // Every 30 minutes as backup
 
-console.log('🎁 Reward system initialized - Daily calculations at 11:59 PM');
+// ============================================================================
+// GRADUAL REWARD DISTRIBUTION SYSTEM
+// ============================================================================
+
+// Schedule next day's rewards with specific timing
+async function scheduleNextDayRewards() {
+    try {
+        console.log('📅 Scheduling next day\'s gradual reward distribution...');
+
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrowDate = tomorrow.toISOString().split('T')[0];
+
+        // Get today's snapshot for reward budget
+        const today = new Date().toISOString().split('T')[0];
+        const { data: snapshot, error: snapshotError } = await supabase
+            .from('treasury_daily_snapshots')
+            .select('reward_budget')
+            .eq('snapshot_date', today)
+            .single();
+
+        if (snapshotError || !snapshot || snapshot.reward_budget <= 0) {
+            console.log('⚠️ No reward budget available for tomorrow');
+            return;
+        }
+
+        const rewardBudget = parseFloat(snapshot.reward_budget);
+        console.log(`💰 Tomorrow's reward budget: ${rewardBudget} SOL`);
+
+        // Clear any existing scheduled rewards for tomorrow (in case of re-run)
+        await supabase
+            .from('scheduled_reward_distributions')
+            .delete()
+            .eq('reward_date', tomorrowDate);
+
+        // Schedule buyback at 00:01 AM
+        await scheduleReward(tomorrowDate, '00:01:00', 'wager_buyback', (rewardBudget * 25) / 100, 25.0, null, 'FPBUsH6tJgRaUu6diyS2AuwvXESrA9MPqJ9cov15boPQ');
+
+        // Schedule 10 random winners (8 AM to 6 PM, hourly)
+        await scheduleRandomWinners(tomorrowDate, rewardBudget);
+
+        // Schedule 100 micro-drops (random times 00:01 to 23:59)
+        await scheduleMicroDrops(tomorrowDate, rewardBudget);
+
+        console.log('✅ Next day\'s rewards scheduled successfully');
+
+    } catch (error) {
+        console.error('❌ Error in scheduleNextDayRewards:', error);
+    }
+}
+
+// Schedule random winners (1 per hour from 8 AM to 6 PM)
+async function scheduleRandomWinners(date, rewardBudget) {
+    try {
+        // Get eligible users
+        const { data: eligibleUsers, error: usersError } = await supabase.rpc('get_eligible_reward_users', {
+            days_back: 30
+        });
+
+        if (usersError || !eligibleUsers || eligibleUsers.length === 0) {
+            console.log('⚠️ No eligible users found for random winners');
+            return;
+        }
+
+        const randomWinnerReward = (rewardBudget * 25) / (100 * 10); // 25% ÷ 10 winners
+        const selectedWinners = shuffleArray([...eligibleUsers]).slice(0, 10);
+
+        // Schedule 1 winner per hour from 8 AM to 6 PM (10 hours total)
+        for (let i = 0; i < selectedWinners.length; i++) {
+            const hour = 8 + i; // 8 AM to 5 PM (10 hours)
+            const minute = Math.floor(Math.random() * 60); // Random minute
+            const scheduledTime = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`;
+
+            await scheduleReward(date, scheduledTime, 'random_winner', randomWinnerReward, 2.5, selectedWinners[i].user_id, selectedWinners[i].wallet_address);
+        }
+
+        console.log(`📋 Scheduled ${selectedWinners.length} random winners (8 AM - 6 PM)`);
+
+    } catch (error) {
+        console.error('❌ Error in scheduleRandomWinners:', error);
+    }
+}
+
+// Schedule micro-drops (100 random times throughout 24 hours)
+async function scheduleMicroDrops(date, rewardBudget) {
+    try {
+        // Get eligible users
+        const { data: eligibleUsers, error: usersError } = await supabase.rpc('get_eligible_reward_users', {
+            days_back: 30
+        });
+
+        if (usersError || !eligibleUsers || eligibleUsers.length === 0) {
+            console.log('⚠️ No eligible users found for micro-drops');
+            return;
+        }
+
+        const microDropReward = (rewardBudget * 35) / (100 * 100); // 35% ÷ 100 drops
+        const microDropUsers = shuffleArray([...eligibleUsers]).slice(0, Math.min(100, eligibleUsers.length));
+
+        // Generate 100 random times throughout the day (00:01 to 23:59)
+        const scheduledTimes = [];
+        for (let i = 0; i < 100; i++) {
+            const hour = Math.floor(Math.random() * 24);
+            const minute = Math.floor(Math.random() * 60);
+            const second = Math.floor(Math.random() * 60);
+
+            // Avoid 00:00:xx to prevent conflicts with buyback
+            if (hour === 0 && minute === 0) {
+                continue;
+            }
+
+            const timeString = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:${second.toString().padStart(2, '0')}`;
+
+            // Ensure no duplicate times
+            if (!scheduledTimes.includes(timeString)) {
+                scheduledTimes.push(timeString);
+            }
+        }
+
+        // Fill remaining slots if we have duplicates
+        while (scheduledTimes.length < 100) {
+            const hour = Math.floor(Math.random() * 24);
+            const minute = Math.floor(Math.random() * 60);
+            const second = Math.floor(Math.random() * 60);
+
+            if (hour === 0 && minute === 0) continue;
+
+            const timeString = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:${second.toString().padStart(2, '0')}`;
+
+            if (!scheduledTimes.includes(timeString)) {
+                scheduledTimes.push(timeString);
+            }
+        }
+
+        // Sort times chronologically
+        scheduledTimes.sort();
+
+        // Schedule micro-drops with random user selection (users can win multiple times)
+        for (let i = 0; i < Math.min(100, scheduledTimes.length); i++) {
+            const randomUser = eligibleUsers[Math.floor(Math.random() * eligibleUsers.length)];
+            await scheduleReward(date, scheduledTimes[i], 'micro_drop', microDropReward, 0.35, randomUser.user_id, randomUser.wallet_address);
+        }
+
+        console.log(`📋 Scheduled ${Math.min(100, scheduledTimes.length)} micro-drops (24-hour random distribution)`);
+
+    } catch (error) {
+        console.error('❌ Error in scheduleMicroDrops:', error);
+    }
+}
+
+// Helper function to schedule a single reward
+async function scheduleReward(date, time, rewardType, amount, percentage, userId, userAddress) {
+    try {
+        const { error } = await supabase
+            .from('scheduled_reward_distributions')
+            .insert({
+                reward_date: date,
+                scheduled_time: time,
+                reward_type: rewardType,
+                reward_amount: amount,
+                reward_percentage: percentage,
+                user_id: userId,
+                user_address: userAddress
+            });
+
+        if (error) {
+            console.error(`❌ Error scheduling ${rewardType} reward:`, error);
+        }
+    } catch (error) {
+        console.error(`❌ Error in scheduleReward for ${rewardType}:`, error);
+    }
+}
+
+// Process scheduled rewards (check every minute)
+async function processScheduledRewards() {
+    try {
+        // Get pending scheduled rewards for current time
+        const { data: pendingRewards, error } = await supabase.rpc('get_pending_scheduled_rewards');
+
+        if (error || !pendingRewards || pendingRewards.length === 0) {
+            return; // No pending rewards
+        }
+
+        console.log(`🎯 Processing ${pendingRewards.length} scheduled rewards...`);
+
+        for (const scheduledReward of pendingRewards) {
+            await executeScheduledReward(scheduledReward);
+            await new Promise(resolve => setTimeout(resolve, 100)); // Small delay
+        }
+
+    } catch (error) {
+        console.error('❌ Error in processScheduledRewards:', error);
+    }
+}
+
+// Execute a single scheduled reward
+async function executeScheduledReward(scheduledReward) {
+    try {
+        console.log(`⏰ Executing ${scheduledReward.reward_type} reward: ${scheduledReward.reward_amount} SOL to ${scheduledReward.user_address}`);
+
+        // Create reward distribution record
+        const { data: rewardDist, error: createError } = await supabase
+            .from('reward_distributions')
+            .insert({
+                snapshot_id: await getTodaySnapshotId(),
+                user_id: scheduledReward.user_id,
+                user_address: scheduledReward.user_address,
+                reward_type: scheduledReward.reward_type,
+                reward_amount: scheduledReward.reward_amount,
+                reward_percentage: scheduledReward.reward_percentage,
+                random_selection_seed: Math.random().toString(36).substr(2, 9)
+            })
+            .select()
+            .single();
+
+        if (createError) {
+            console.error(`❌ Error creating reward distribution for scheduled reward:`, createError);
+            return;
+        }
+
+        // Execute the actual distribution
+        const success = await distributeReward(rewardDist);
+
+        if (success) {
+            // Mark scheduled reward as executed
+            await supabase
+                .from('scheduled_reward_distributions')
+                .update({
+                    is_executed: true,
+                    executed_at: new Date().toISOString(),
+                    distribution_id: rewardDist.id
+                })
+                .eq('id', scheduledReward.id);
+
+            console.log(`✅ Scheduled ${scheduledReward.reward_type} reward executed successfully`);
+        }
+
+    } catch (error) {
+        console.error(`❌ Error executing scheduled reward:`, error);
+    }
+}
+
+// Helper function to get today's snapshot ID
+async function getTodaySnapshotId() {
+    const today = new Date().toISOString().split('T')[0];
+    const { data: snapshot, error } = await supabase
+        .from('treasury_daily_snapshots')
+        .select('id')
+        .eq('snapshot_date', today)
+        .single();
+
+    return snapshot?.id || null;
+}
+
+console.log('🎁 Gradual reward system initialized - Rewards distributed throughout the day');
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
