@@ -13,7 +13,7 @@
 import axios from 'axios';
 
 const BASE_URL = process.env.BACKGROUND_WORKER_URL || 'https://backgroundworker-11kk.onrender.com';
-const TEST_BUDGET = 4.0; // 4 SOL for testing (adjusted to available balance)
+const TEST_BUDGET = 3.0; // 3 SOL for testing (adjusted to available balance)
 
 async function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
@@ -100,21 +100,35 @@ async function testRewardSystem() {
     const today = new Date().toISOString().split('T')[0];
     const snapshotResult = await makeRequest('GET', `/admin/treasury-snapshot?date=${today}`);
 
-    if (snapshotResult.success && snapshotResult.data.buyback_amount > 0) {
-        console.log(`🎯 Found buyback amount: ${snapshotResult.data.buyback_amount} SOL`);
+    if (snapshotResult.success && snapshotResult.data.snapshot) {
+        const snapshot = snapshotResult.data.snapshot;
+        console.log(`🔍 Found snapshot for ${today}:`);
+        console.log(`   - Buyback Amount: ${snapshot.buyback_amount || 0} SOL`);
+        console.log(`   - Buyback Distributed: ${snapshot.buyback_distributed || 0} SOL`);
+        console.log(`   - Snapshot ID: ${snapshot.id}`);
 
-        const buybackResult = await makeRequest('POST', '/admin/distribute-buyback', {
-            snapshot_id: snapshotResult.data.id
-        });
+        if (snapshot.buyback_amount > 0 && snapshot.buyback_distributed === 0) {
+            console.log(`🎯 Distributing buyback: ${snapshot.buyback_amount} SOL to ${snapshot.buyback_wallet}`);
 
-        if (buybackResult.success) {
-            console.log('✅ Buyback distributed successfully!');
-            console.log('📋 Buyback result:', buybackResult.data);
+            const buybackResult = await makeRequest('POST', '/admin/distribute-buyback', {
+                snapshot_id: snapshot.id
+            });
+
+            if (buybackResult.success) {
+                console.log('✅ Buyback distributed successfully!');
+                console.log(`💰 Amount: ${buybackResult.data.buyback_amount} SOL`);
+                console.log(`🏦 Wallet: ${buybackResult.data.buyback_wallet}`);
+                console.log(`📝 Signature: ${buybackResult.data.signature}`);
+            } else {
+                console.log('⚠️ Buyback distribution failed:', buybackResult.error);
+            }
+        } else if (snapshot.buyback_distributed > 0) {
+            console.log(`ℹ️ Buyback already distributed: ${snapshot.buyback_distributed} SOL`);
         } else {
-            console.log('⚠️ Buyback distribution failed:', buybackResult.error);
+            console.log(`ℹ️ No buyback amount available: ${snapshot.buyback_amount || 0} SOL`);
         }
     } else {
-        console.log('ℹ️ No buyback amount found or snapshot not available');
+        console.log('⚠️ Could not retrieve snapshot:', snapshotResult.error || 'Unknown error');
     }
 
     // Step 5: Check final treasury balance

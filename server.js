@@ -4909,6 +4909,9 @@ async function distributePendingRewards() {
             await updateTreasurySnapshot(randomWinnersTotal, milestoneRewardsTotal, microDropsTotal, buybackTotal, totalDistributed);
         }
 
+        // Check if we should mark the snapshot as fully distributed
+        await checkAndMarkSnapshotAsDistributed();
+
         console.log(`✅ Successfully distributed ${successfulDistributions}/${pendingRewards.length} rewards totaling ${totalDistributed.toFixed(6)} SOL`);
 
     } catch (error) {
@@ -5065,6 +5068,9 @@ async function distributeBuybackReward(snapshotId) {
 
         console.log(`✅ Buyback distributed successfully: ${signature}`);
 
+        // Check if snapshot should be marked as fully distributed after buyback
+        await checkAndMarkSnapshotAsDistributed();
+
         return {
             success: true,
             buyback_amount: buybackAmount,
@@ -5079,6 +5085,56 @@ async function distributeBuybackReward(snapshotId) {
             success: false,
             error: error.message
         };
+    }
+}
+
+// Check if snapshot should be marked as fully distributed
+async function checkAndMarkSnapshotAsDistributed() {
+    try {
+        const today = new Date().toISOString().split('T')[0];
+
+        // Get today's snapshot
+        const { data: snapshot, error: fetchError } = await supabase
+            .from('treasury_daily_snapshots')
+            .select('*')
+            .eq('snapshot_date', today)
+            .single();
+
+        if (fetchError || !snapshot) {
+            return; // No snapshot found
+        }
+
+        // Calculate total distributed amount
+        const totalDistributed = parseFloat(snapshot.random_winners_distributed || 0) +
+            parseFloat(snapshot.milestone_rewards_distributed || 0) +
+            parseFloat(snapshot.micro_drops_distributed || 0) +
+            parseFloat(snapshot.buyback_distributed || 0);
+
+        const rewardBudget = parseFloat(snapshot.reward_budget || 0);
+
+        // Check if we've distributed at least 99.75% of the budget (allowing for very small rounding differences)
+        if (rewardBudget > 0 && totalDistributed >= rewardBudget * 0.9975) {
+            console.log(`🎯 Marking snapshot as fully distributed: ${totalDistributed.toFixed(6)}/${rewardBudget.toFixed(6)} SOL (${((totalDistributed / rewardBudget) * 100).toFixed(1)}%)`);
+
+            const { error: updateError } = await supabase
+                .from('treasury_daily_snapshots')
+                .update({
+                    is_distributed: true,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', snapshot.id);
+
+            if (updateError) {
+                console.error('❌ Error marking snapshot as distributed:', updateError);
+            } else {
+                console.log(`✅ Snapshot marked as fully distributed for ${today}`);
+            }
+        } else {
+            console.log(`📊 Snapshot progress: ${totalDistributed.toFixed(6)}/${rewardBudget.toFixed(6)} SOL (${((totalDistributed / rewardBudget) * 100).toFixed(1)}%)`);
+        }
+
+    } catch (error) {
+        console.error('❌ Error checking snapshot distribution status:', error);
     }
 }
 
