@@ -608,6 +608,8 @@ app.get('/admin/treasury-balance', async (req, res) => {
 });
 
 // Test reward system with specified budget
+// FIXED: Now prevents multiple snapshots from being created on the same day
+// This ensures consistent reward calculations (micro-drops, etc.)
 app.post('/admin/test-rewards', async (req, res) => {
     try {
         const { testBudget = 5.0, skipDailyCalculation = true } = req.body;
@@ -625,26 +627,48 @@ app.post('/admin/test-rewards', async (req, res) => {
 
         const today = new Date().toISOString().split('T')[0];
 
-        // Create a test treasury snapshot with the specified budget
-        const { error: snapshotError } = await supabase
+        // Check if a snapshot already exists for today
+        const { data: existingSnapshot, error: checkError } = await supabase
             .from('treasury_daily_snapshots')
-            .upsert({
-                snapshot_date: today,
-                treasury_balance_start: treasuryBalance - testBudget,
-                treasury_balance_end: treasuryBalance,
-                daily_earnings: testBudget,
-                reward_budget: testBudget, // Use full test budget as reward budget
-                is_calculated: true
-            }, {
-                onConflict: 'snapshot_date'
-            });
+            .select('*')
+            .eq('snapshot_date', today)
+            .single();
+
+        if (existingSnapshot) {
+            console.log(`⚠️ Snapshot already exists for today with budget: ${existingSnapshot.reward_budget} SOL`);
+            console.log(`📝 Using existing snapshot instead of creating new one`);
+        } else {
+            // Create a test treasury snapshot with the specified budget
+            const { error: snapshotError } = await supabase
+                .from('treasury_daily_snapshots')
+                .insert({
+                    snapshot_date: today,
+                    treasury_balance_start: treasuryBalance - testBudget,
+                    treasury_balance_end: treasuryBalance,
+                    daily_earnings: testBudget,
+                    reward_budget: testBudget, // Use full test budget as reward budget
+                    is_calculated: true
+                });
+
+            if (snapshotError) {
+                return res.status(500).json({ success: false, error: `Snapshot error: ${snapshotError.message}` });
+            }
+
+            console.log(`✅ Created new snapshot for today with budget: ${testBudget} SOL`);
+        }
 
         if (snapshotError) {
             return res.status(500).json({ success: false, error: `Snapshot error: ${snapshotError.message}` });
         }
 
-        // Schedule test rewards with the specified budget
-        await scheduleRandomRewards(today, testBudget);
+        // Use existing snapshot budget or test budget
+        const snapshotToUse = existingSnapshot || { id: null, reward_budget: testBudget };
+        const budgetToUse = existingSnapshot ? existingSnapshot.reward_budget : testBudget;
+
+        console.log(`💰 Using reward budget: ${budgetToUse} SOL`);
+
+        // Schedule test rewards with the appropriate budget
+        await scheduleRandomRewards(today, budgetToUse, snapshotToUse.id);
 
         // Get pending rewards count
         const { data: pendingRewards, error: pendingError } = await supabase
@@ -4630,20 +4654,26 @@ async function calculateDailyRewards() {
 
 // Legacy immediate scheduling function - replaced by gradual distribution
 // This function is kept for manual testing via /admin/test-rewards endpoint
-async function scheduleRandomRewards(date, rewardBudget) {
+async function scheduleRandomRewards(date, rewardBudget, snapshotId = null) {
     try {
         console.log('🎲 Scheduling immediate rewards for testing...');
 
-        // Get today's snapshot
-        const { data: snapshot, error: snapshotError } = await supabase
-            .from('treasury_daily_snapshots')
-            .select('id')
-            .eq('snapshot_date', date)
-            .single();
+        // Use provided snapshot ID or get today's snapshot
+        let snapshot;
+        if (snapshotId) {
+            snapshot = { id: snapshotId };
+        } else {
+            const { data: snapshotData, error: snapshotError } = await supabase
+                .from('treasury_daily_snapshots')
+                .select('id')
+                .eq('snapshot_date', date)
+                .single();
 
-        if (snapshotError || !snapshot) {
-            console.error('❌ Error getting snapshot for random rewards:', snapshotError);
-            return;
+            if (snapshotError || !snapshotData) {
+                console.error('❌ Error getting snapshot for random rewards:', snapshotError);
+                return;
+            }
+            snapshot = snapshotData;
         }
 
         // Get eligible users (active users with recent activity)
@@ -4693,6 +4723,9 @@ async function scheduleRandomRewards(date, rewardBudget) {
 // Create a reward distribution record
 async function createRewardDistribution(snapshotId, user, rewardType, rewardAmount, rewardPercentage) {
     try {
+        // Round reward amount to 6 decimal places to avoid precision issues
+        const roundedAmount = Math.round(rewardAmount * 1000000) / 1000000;
+
         const { error } = await supabase
             .from('reward_distributions')
             .insert({
@@ -4700,13 +4733,20 @@ async function createRewardDistribution(snapshotId, user, rewardType, rewardAmou
                 user_id: user.user_id || null, // Allow null for buyback
                 user_address: user.wallet_address,
                 reward_type: rewardType,
-                reward_amount: rewardAmount,
+                reward_amount: roundedAmount,
                 reward_percentage: rewardPercentage,
                 random_selection_seed: Math.random().toString(36).substr(2, 9)
             });
 
         if (error) {
-            console.error(`❌ Error creating ${rewardType} reward distribution:`, error);
+            if (error.message.includes('numeric field overflow')) {
+                console.error(`❌ Database precision issue for ${rewardType}: ${rewardAmount} SOL`);
+                console.error(`💡 Need to run: ALTER TABLE reward_distributions ALTER COLUMN reward_amount TYPE NUMERIC(10,6);`);
+            } else {
+                console.error(`❌ Error creating ${rewardType} reward distribution:`, error);
+            }
+        } else {
+            console.log(`✅ Created ${rewardType} reward: ${roundedAmount} SOL`);
         }
     } catch (error) {
         console.error(`❌ Error in createRewardDistribution for ${rewardType}:`, error);
