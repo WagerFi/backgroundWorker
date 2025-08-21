@@ -634,12 +634,14 @@ app.post('/admin/test-rewards', async (req, res) => {
             .eq('snapshot_date', today)
             .single();
 
+        let snapshotError = null;
+
         if (existingSnapshot) {
             console.log(`⚠️ Snapshot already exists for today with budget: ${existingSnapshot.reward_budget} SOL`);
             console.log(`📝 Using existing snapshot instead of creating new one`);
         } else {
             // Create a test treasury snapshot with the specified budget
-            const { error: snapshotError } = await supabase
+            const { error: createError } = await supabase
                 .from('treasury_daily_snapshots')
                 .insert({
                     snapshot_date: today,
@@ -650,6 +652,7 @@ app.post('/admin/test-rewards', async (req, res) => {
                     is_calculated: true
                 });
 
+            snapshotError = createError;
             if (snapshotError) {
                 return res.status(500).json({ success: false, error: `Snapshot error: ${snapshotError.message}` });
             }
