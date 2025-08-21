@@ -607,6 +607,70 @@ app.get('/admin/treasury-balance', async (req, res) => {
     }
 });
 
+// Test reward system with specified budget
+app.post('/admin/test-rewards', async (req, res) => {
+    try {
+        const { testBudget = 5.0, skipDailyCalculation = true } = req.body;
+
+        console.log(`🧪 Testing reward system with ${testBudget} SOL budget`);
+
+        // Check treasury balance
+        const treasuryBalance = await getTreasuryBalance();
+        if (treasuryBalance < testBudget) {
+            return res.status(400).json({
+                success: false,
+                error: `Insufficient treasury balance. Available: ${treasuryBalance} SOL, Requested: ${testBudget} SOL`
+            });
+        }
+
+        const today = new Date().toISOString().split('T')[0];
+
+        // Create a test treasury snapshot with the specified budget
+        const { error: snapshotError } = await supabase
+            .from('treasury_daily_snapshots')
+            .upsert({
+                snapshot_date: today,
+                treasury_balance_start: treasuryBalance - testBudget,
+                treasury_balance_end: treasuryBalance,
+                daily_earnings: testBudget,
+                reward_budget: testBudget, // Use full test budget as reward budget
+                is_calculated: true
+            }, {
+                onConflict: 'snapshot_date'
+            });
+
+        if (snapshotError) {
+            return res.status(500).json({ success: false, error: `Snapshot error: ${snapshotError.message}` });
+        }
+
+        // Schedule test rewards with the specified budget
+        await scheduleRandomRewards(today, testBudget);
+
+        // Get pending rewards count
+        const { data: pendingRewards, error: pendingError } = await supabase
+            .from('reward_distributions')
+            .select('count(*)', { count: 'exact' })
+            .eq('is_distributed', false);
+
+        const pendingCount = pendingError ? 0 : (pendingRewards[0]?.count || 0);
+
+        res.json({
+            success: true,
+            message: `Test rewards scheduled successfully`,
+            details: {
+                testBudget: testBudget,
+                treasuryBalance: treasuryBalance,
+                pendingRewards: pendingCount,
+                nextDistribution: 'Will distribute on next 5-minute cycle or call /admin/distribute-rewards'
+            }
+        });
+
+    } catch (error) {
+        console.error('❌ Error in test-rewards:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // IMMEDIATE EXECUTION FUNCTIONS + AUTO-EXPIRATION
 // 
 // RESOLUTION STRATEGY:

@@ -74,6 +74,36 @@ npm start
 - Logs available in Render.com dashboard
 - Error tracking and notification system
 
+## 🧪 Testing
+
+### Reward System Testing
+Test the complete reward system with real SOL distributions:
+
+```bash
+# Run the comprehensive reward system test
+node test-rewards.js
+
+# Or test manually via API:
+# 1. Check treasury balance
+curl http://localhost:3001/admin/treasury-balance
+
+# 2. Schedule test rewards (5 SOL budget)
+curl -X POST http://localhost:3001/admin/test-rewards \
+  -H "Content-Type: application/json" \
+  -d '{"testBudget": 5.0}'
+
+# 3. Distribute pending rewards
+curl -X POST http://localhost:3001/admin/distribute-rewards
+```
+
+**What gets tested:**
+- Treasury balance monitoring (6.5 SOL available)
+- Random winner selection (10 winners × 0.5% = 5% of budget)
+- Micro-drop distribution (100 recipients = 7% of budget)
+- Real SOL transfers from treasury to users
+- Database reward tracking and transaction logging
+- User notifications for reward recipients
+
 ## 🤝 Contributing
 
 1. Fork the repository
