@@ -93,6 +93,30 @@ async function testRewardSystem() {
     console.log('✅ Reward distribution completed!');
     console.log('📋 Distribution result:', distributeResult.data);
 
+    // Step 4.5: Distribute buyback separately (if available)
+    console.log('\n💰 Step 4.5: Checking for buyback rewards...');
+
+    // Get today's snapshot to check for buyback
+    const today = new Date().toISOString().split('T')[0];
+    const snapshotResult = await makeRequest('GET', `/admin/treasury-snapshot?date=${today}`);
+
+    if (snapshotResult.success && snapshotResult.data.buyback_amount > 0) {
+        console.log(`🎯 Found buyback amount: ${snapshotResult.data.buyback_amount} SOL`);
+
+        const buybackResult = await makeRequest('POST', '/admin/distribute-buyback', {
+            snapshot_id: snapshotResult.data.id
+        });
+
+        if (buybackResult.success) {
+            console.log('✅ Buyback distributed successfully!');
+            console.log('📋 Buyback result:', buybackResult.data);
+        } else {
+            console.log('⚠️ Buyback distribution failed:', buybackResult.error);
+        }
+    } else {
+        console.log('ℹ️ No buyback amount found or snapshot not available');
+    }
+
     // Step 5: Check final treasury balance
     console.log('\n📊 Step 5: Checking final treasury balance...');
     await sleep(2000); // Wait for transactions to settle

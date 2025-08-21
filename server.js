@@ -594,6 +594,21 @@ app.post('/admin/distribute-rewards', async (req, res) => {
     }
 });
 
+app.post('/admin/distribute-buyback', async (req, res) => {
+    try {
+        const { snapshot_id } = req.body;
+
+        if (!snapshot_id) {
+            return res.status(400).json({ error: 'snapshot_id is required' });
+        }
+
+        const result = await distributeBuybackReward(snapshot_id);
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 app.get('/admin/treasury-balance', async (req, res) => {
     try {
         const balance = await getTreasuryBalance();
@@ -601,6 +616,33 @@ app.get('/admin/treasury-balance', async (req, res) => {
             success: true,
             balance: balance,
             address: treasuryKeypair.publicKey.toString()
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/admin/treasury-snapshot', async (req, res) => {
+    try {
+        const { date } = req.query;
+
+        if (!date) {
+            return res.status(400).json({ error: 'date parameter is required' });
+        }
+
+        const { data: snapshot, error } = await supabase
+            .from('treasury_daily_snapshots')
+            .select('*')
+            .eq('snapshot_date', date)
+            .single();
+
+        if (error || !snapshot) {
+            return res.status(404).json({ error: 'Snapshot not found for date: ' + date });
+        }
+
+        res.json({
+            success: true,
+            snapshot: snapshot
         });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
@@ -4758,14 +4800,23 @@ async function scheduleRandomRewards(date, rewardBudget, snapshotId = null) {
             await createRewardDistribution(snapshot.id, user, 'micro_drop', microDropReward, 0.35);
         }
 
-        // Immediate buyback for testing
+        // Handle buyback separately to avoid precision issues
         const buybackAmount = (rewardBudget * 25) / 100; // 25% of reward budget
-        const buybackWallet = {
-            user_id: null, // Special case for buyback
-            wallet_address: 'FPBUsH6tJgRaUu6diyS2AuwvXESrA9MPqJ9cov15boPQ'
-        };
 
-        await createRewardDistribution(snapshot.id, buybackWallet, 'wager_buyback', buybackAmount, 25.0);
+        // Store buyback amount in snapshot instead of creating problematic reward distribution
+        const { error: buybackError } = await supabase
+            .from('treasury_daily_snapshots')
+            .update({
+                buyback_amount: buybackAmount,
+                buyback_wallet: 'FPBUsH6tJgRaUu6diyS2AuwvXESrA9MPqJ9cov15boPQ'
+            })
+            .eq('id', snapshot.id);
+
+        if (buybackError) {
+            console.error('❌ Error updating buyback amount:', buybackError);
+        } else {
+            console.log(`✅ Buyback amount stored: ${buybackAmount.toFixed(6)} SOL (will be distributed separately)`);
+        }
 
         console.log(`✅ Scheduled ${selectedWinners.length} random winners, ${microDropUsers.length} micro-drops, and buyback (${buybackAmount.toFixed(6)} SOL) for immediate testing`);
 
@@ -4810,11 +4861,12 @@ async function createRewardDistribution(snapshotId, user, rewardType, rewardAmou
 // Distribute pending rewards
 async function distributePendingRewards() {
     try {
-        // Get all pending reward distributions
+        // Get all pending reward distributions (excluding buyback to avoid precision issues)
         const { data: pendingRewards, error } = await supabase
             .from('reward_distributions')
             .select('*')
             .eq('is_distributed', false)
+            .neq('reward_type', 'wager_buyback') // Exclude buyback from regular distribution
             .order('created_at', { ascending: true })
             .limit(50); // Process in batches
 
@@ -4936,6 +4988,97 @@ async function distributeReward(reward) {
             .eq('id', reward.id);
 
         return false; // Failure
+    }
+}
+
+// Distribute buyback reward separately to avoid precision issues
+async function distributeBuybackReward(snapshotId) {
+    try {
+        console.log(`💰 Distributing buyback reward for snapshot: ${snapshotId}`);
+
+        // Get snapshot details
+        const { data: snapshot, error: fetchError } = await supabase
+            .from('treasury_daily_snapshots')
+            .select('*')
+            .eq('id', snapshotId)
+            .single();
+
+        if (fetchError || !snapshot) {
+            throw new Error(`Snapshot not found: ${fetchError?.message || 'Unknown error'}`);
+        }
+
+        // Check if buyback is already distributed
+        if (snapshot.buyback_distributed > 0) {
+            return {
+                success: false,
+                error: 'Buyback already distributed for this snapshot'
+            };
+        }
+
+        const buybackAmount = parseFloat(snapshot.buyback_amount || 0);
+        const buybackWallet = snapshot.buyback_wallet || 'FPBUsH6tJgRaUu6diyS2AuwvXESrA9MPqJ9cov15boPQ';
+
+        if (buybackAmount <= 0) {
+            return {
+                success: false,
+                error: 'No buyback amount available'
+            };
+        }
+
+        console.log(`💰 Distributing buyback: ${buybackAmount} SOL to ${buybackWallet}`);
+
+        // Convert to lamports
+        const lamports = Math.floor(buybackAmount * LAMPORTS_PER_SOL);
+
+        // Create transfer instruction
+        const transferInstruction = SystemProgram.transfer({
+            fromPubkey: treasuryKeypair.publicKey,
+            toPubkey: new PublicKey(buybackWallet),
+            lamports: lamports,
+        });
+
+        // Create and send transaction
+        const transaction = new Transaction().add(transferInstruction);
+        const { blockhash } = await connection.getLatestBlockhash();
+        transaction.recentBlockhash = blockhash;
+        transaction.feePayer = treasuryKeypair.publicKey;
+
+        // Sign and send transaction
+        transaction.sign(treasuryKeypair);
+        const signature = await connection.sendRawTransaction(transaction.serialize());
+
+        // Confirm transaction
+        await connection.confirmTransaction(signature, 'confirmed');
+
+        // Update snapshot to mark buyback as distributed
+        const { error: updateError } = await supabase
+            .from('treasury_daily_snapshots')
+            .update({
+                buyback_distributed: buybackAmount,
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', snapshotId);
+
+        if (updateError) {
+            console.error('❌ Error updating buyback distributed status:', updateError);
+        }
+
+        console.log(`✅ Buyback distributed successfully: ${signature}`);
+
+        return {
+            success: true,
+            buyback_amount: buybackAmount,
+            buyback_wallet: buybackWallet,
+            signature: signature,
+            message: 'Buyback reward distributed successfully'
+        };
+
+    } catch (error) {
+        console.error('❌ Error distributing buyback reward:', error);
+        return {
+            success: false,
+            error: error.message
+        };
     }
 }
 
