@@ -4382,8 +4382,8 @@ app.listen(PORT, () => {
             console.log(`🧪 Testing notification for user: ${testUser.id} (${testUser.wallet_address})`);
             const testResult = await supabase.rpc('create_notification', {
                 p_user_address: testUser.wallet_address,
-                p_type: 'system',
-                p_title: 'Test Notification',
+                p_type: 'direct_message', // Use valid notification type
+                p_title: 'System Test',
                 p_message: 'Background worker is running and notifications are working!'
             });
 
