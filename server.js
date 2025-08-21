@@ -617,9 +617,7 @@ app.post('/admin/test-rewards', async (req, res) => {
         console.log(`🧪 Testing reward system with ${testBudget} SOL budget`);
 
         // Check treasury balance
-        console.log('🔍 Getting treasury balance...');
         const treasuryBalance = await getTreasuryBalance();
-        console.log(`💰 Treasury balance: ${treasuryBalance} SOL`);
         if (treasuryBalance < testBudget) {
             return res.status(400).json({
                 success: false,
@@ -628,7 +626,6 @@ app.post('/admin/test-rewards', async (req, res) => {
         }
 
         const today = new Date().toISOString().split('T')[0];
-        console.log(`📅 Checking for existing snapshot on ${today}...`);
 
         // Check if a snapshot already exists for today
         const { data: existingSnapshot, error: checkError } = await supabase
@@ -637,14 +634,12 @@ app.post('/admin/test-rewards', async (req, res) => {
             .eq('snapshot_date', today)
             .single();
 
-        let snapshotError = null;
-
         if (existingSnapshot) {
             console.log(`⚠️ Snapshot already exists for today with budget: ${existingSnapshot.reward_budget} SOL`);
             console.log(`📝 Using existing snapshot instead of creating new one`);
         } else {
             // Create a test treasury snapshot with the specified budget
-            const { error: createError } = await supabase
+            const { error: snapshotError } = await supabase
                 .from('treasury_daily_snapshots')
                 .insert({
                     snapshot_date: today,
@@ -655,7 +650,6 @@ app.post('/admin/test-rewards', async (req, res) => {
                     is_calculated: true
                 });
 
-            snapshotError = createError;
             if (snapshotError) {
                 return res.status(500).json({ success: false, error: `Snapshot error: ${snapshotError.message}` });
             }
@@ -674,9 +668,7 @@ app.post('/admin/test-rewards', async (req, res) => {
         console.log(`💰 Using reward budget: ${budgetToUse} SOL`);
 
         // Schedule test rewards with the appropriate budget
-        console.log('🎲 Scheduling random rewards...');
         await scheduleRandomRewards(today, budgetToUse, snapshotToUse.id);
-        console.log('✅ Random rewards scheduled');
 
         // Get pending rewards count
         const { data: pendingRewards, error: pendingError } = await supabase
@@ -4646,13 +4638,7 @@ async function scheduleMilestoneReward(creatorId, acceptorId, milestone, wagerCo
 // Get current treasury balance from on-chain
 async function getTreasuryBalance() {
     try {
-        // Add timeout to prevent hanging
-        const balancePromise = connection.getBalance(treasuryKeypair.publicKey);
-        const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('RPC timeout after 10 seconds')), 10000)
-        );
-
-        const balance = await Promise.race([balancePromise, timeoutPromise]);
+        const balance = await connection.getBalance(treasuryKeypair.publicKey);
         return balance / LAMPORTS_PER_SOL;
     } catch (error) {
         console.error('❌ Error getting treasury balance:', error);
