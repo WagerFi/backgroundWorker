@@ -1494,13 +1494,13 @@ async function updateReferrerStats(wagererAddress, wagerAmount, commissionAmount
                 .eq('wallet_address', referrerAddress);
 
             if (!levelError) {
-                const levelNames = { 1: 'Recruiter', 2: 'Influencer', 3: 'Rainmaker', 4: 'Titan' };
-                const levelEmojis = { 1: '🔥', 2: '🌟', 3: '⚡', 4: '🏆' };
-                const levelPercentages = { 1: '10%', 2: '15%', 3: '20%', 4: '25%' };
+                const tierNames = { 1: 'Tier 1', 2: 'Tier 2', 3: 'Tier 3', 4: 'Tier 4' };
+                const tierEmojis = { 1: '🔥', 2: '🌟', 3: '⚡', 4: '🏆' };
+                const tierPercentages = { 1: '10%', 2: '15%', 3: '20%', 4: '25%' };
 
-                console.log(`🎉 LEVEL UP! ${referrerAddress} promoted from Level ${currentLevel} to Level ${newLevel} (${levelNames[newLevel]}) with ${newTradeVol} SOL volume`);
+                console.log(`🎉 TIER UP! ${referrerAddress} promoted from Tier ${currentLevel} to Tier ${newLevel} (${tierNames[newLevel]}) with ${newTradeVol} SOL volume`);
 
-                // Create level-up notification
+                // Create tier-up notification
                 const { data: referrerUser, error: fetchReferrerError } = await supabase
                     .from('users')
                     .select('id')
@@ -1511,20 +1511,20 @@ async function updateReferrerStats(wagererAddress, wagerAmount, commissionAmount
                     await createNotification(
                         referrerUser.id,
                         'wager_resolved', // Use existing valid notification type
-                        `${levelEmojis[newLevel]} Level Up! You're now a ${levelNames[newLevel]}!`,
-                        `Congratulations! You've reached Level ${newLevel} (${levelNames[newLevel]}) and now earn ${levelPercentages[newLevel]} commission on all referral trades. Your referral volume: ${newTradeVol} SOL`,
+                        `${tierEmojis[newLevel]} Tier Up! You're now ${tierNames[newLevel]}!`,
+                        `Congratulations! You've reached ${tierNames[newLevel]} and now earn ${tierPercentages[newLevel]} commission on all referral trades. Your referral volume: ${newTradeVol} SOL`,
                         {
-                            type: 'level_upgrade',
-                            new_level: newLevel,
-                            level_name: levelNames[newLevel],
-                            level_emoji: levelEmojis[newLevel],
-                            commission_rate: levelPercentages[newLevel],
+                            type: 'tier_upgrade',
+                            new_tier: newLevel,
+                            tier_name: tierNames[newLevel],
+                            tier_emoji: tierEmojis[newLevel],
+                            commission_rate: tierPercentages[newLevel],
                             total_volume: newTradeVol,
                             animation_trigger: true // Trigger frontend animation
                         }
                     );
 
-                    console.log(`📬 Level-up notification sent to ${referrerAddress}`);
+                    console.log(`📬 Tier-up notification sent to ${referrerAddress}`);
                 }
             }
         }
