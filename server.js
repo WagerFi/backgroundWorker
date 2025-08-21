@@ -4504,8 +4504,8 @@ async function scheduleMilestoneReward(userId, milestone, wagerCount) {
             return;
         }
 
-        // Calculate reward amount (1% of daily reward budget)
-        const rewardPercentage = 1.0; // 1%
+        // Calculate reward amount (5% of daily reward budget)
+        const rewardPercentage = 5.0; // 5% for each milestone
         const rewardAmount = (snapshot.reward_budget * rewardPercentage) / 100;
 
         if (rewardAmount <= 0) {
@@ -4628,7 +4628,7 @@ async function calculateDailyRewards() {
     }
 }
 
-// Schedule random winners (10 winners x 0.5% = 5%) and micro-drops (100 drops = 7%)
+// Schedule random winners (10 winners x 2.5% = 25%) and micro-drops (100 drops = 35%)
 async function scheduleRandomRewards(date, rewardBudget) {
     try {
         console.log('🎲 Scheduling random rewards for the day...');
@@ -4657,20 +4657,20 @@ async function scheduleRandomRewards(date, rewardBudget) {
 
         console.log(`👥 Found ${eligibleUsers.length} eligible users for rewards`);
 
-        // Schedule 10 random winners (0.5% each = 5% total)
-        const randomWinnerReward = (rewardBudget * 0.5) / 100; // 0.5% each
+        // Schedule 10 random winners (25% total = 2.5% each)
+        const randomWinnerReward = (rewardBudget * 25) / (100 * 10); // 25% ÷ 10 winners = 2.5% each
         const selectedWinners = shuffleArray([...eligibleUsers]).slice(0, 10);
 
         for (const user of selectedWinners) {
-            await createRewardDistribution(snapshot.id, user, 'random_winner', randomWinnerReward, 0.5);
+            await createRewardDistribution(snapshot.id, user, 'random_winner', randomWinnerReward, 2.5);
         }
 
-        // Schedule 100 micro-drops (7% total)
-        const microDropReward = (rewardBudget * 7) / (100 * 100); // 7% split among 100 drops
+        // Schedule 100 micro-drops (35% total = 0.35% each)
+        const microDropReward = (rewardBudget * 35) / (100 * 100); // 35% ÷ 100 drops = 0.35% each
         const microDropUsers = shuffleArray([...eligibleUsers]).slice(0, 100);
 
         for (const user of microDropUsers) {
-            await createRewardDistribution(snapshot.id, user, 'micro_drop', microDropReward, 0.07);
+            await createRewardDistribution(snapshot.id, user, 'micro_drop', microDropReward, 0.35);
         }
 
         console.log(`✅ Scheduled ${selectedWinners.length} random winners and ${microDropUsers.length} micro-drops`);
