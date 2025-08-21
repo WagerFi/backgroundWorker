@@ -328,7 +328,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     acceptorReferrer: accounts.acceptorReferrerPubkey ?
                         new PublicKey(accounts.acceptorReferrerPubkey) :
                         new PublicKey(accounts.treasuryPubkey), // Treasury placeholder (gets 0%)
-                    authority: authorityKeypair.publicKey, // Include authority in accounts like other working instructions
+                    authority: authorityKeypair.publicKey, // Use the original authority keypair to match the provider
                 };
 
                 console.log(`🔍 Final enhancedAccounts object (with authority):`, JSON.stringify(enhancedAccounts, (key, value) => {
@@ -376,11 +376,9 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 console.log(`  SecretKey type: ${typeof authorityKeypair.secretKey}`);
                 console.log(`  SecretKey is Uint8Array: ${authorityKeypair.secretKey instanceof Uint8Array}`);
 
-                // Ensure we're using a fresh, properly constructed keypair
-                const freshKeypair = Keypair.fromSecretKey(authorityKeypair.secretKey);
-                console.log(`🔍 Fresh keypair verification:`);
-                console.log(`  Public key matches: ${freshKeypair.publicKey.equals(authorityKeypair.publicKey)}`);
-                console.log(`  Is Keypair instance: ${freshKeypair instanceof Keypair}`);
+                console.log(`🔍 Authority keypair verification:`);
+                console.log(`  Public key: ${authorityKeypair.publicKey.toString()}`);
+                console.log(`  Is Keypair instance: ${authorityKeypair instanceof Keypair}`);
 
                 result = await anchorProgram.methods
                     .resolveWagerWithReferrals(
@@ -389,7 +387,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                         args.acceptorReferrerPercentage || 0
                     )
                     .accounts(enhancedAccounts)
-                    .signers([freshKeypair])  // Use the fresh keypair to ensure it's properly constructed
+                    .signers([authorityKeypair])  // Use the original authority keypair to match the provider
                     .rpc();
                 break;
 
