@@ -4926,7 +4926,7 @@ async function scheduleRandomRewards(date, rewardBudget, snapshotId = null) {
         const selectedWinners = shuffleArray([...eligibleUsers]).slice(0, Math.min(10, eligibleUsers.length));
 
         for (const user of selectedWinners) {
-            await createRewardDistribution(snapshot.id, user, 'random_winner', randomWinnerReward, 2.5);
+            await createRewardDistribution(snapshot.id, user, 'random_winner', randomWinnerReward, 0.025);
         }
 
         // Micro-drops for testing (limited to available users)
@@ -4934,7 +4934,7 @@ async function scheduleRandomRewards(date, rewardBudget, snapshotId = null) {
         const microDropUsers = shuffleArray([...eligibleUsers]).slice(0, Math.min(100, eligibleUsers.length));
 
         for (const user of microDropUsers) {
-            await createRewardDistribution(snapshot.id, user, 'micro_drop', microDropReward, 0.35);
+            await createRewardDistribution(snapshot.id, user, 'micro_drop', microDropReward, 0.0035);
         }
 
         // Handle buyback separately to avoid precision issues
@@ -5334,20 +5334,20 @@ function shuffleArray(array) {
 // REWARD SYSTEM CRON JOBS
 // ============================================================================
 
-// TEMPORARY: Daily calculation at 13:11 UTC for testing NEW snapshot creation logic (change back to 23:59 after test)
+// Daily calculation at 23:59 UTC (production schedule)
 setInterval(async () => {
     const now = new Date();
-    console.log(`⏰ Current UTC time: ${now.getUTCHours()}:${now.getUTCMinutes().toString().padStart(2, '0')} (checking for 13:11)`);
-    const isTime = now.getUTCHours() === 13 && now.getUTCMinutes() === 11;
+    console.log(`⏰ Current UTC time: ${now.getUTCHours()}:${now.getUTCMinutes().toString().padStart(2, '0')} (checking for 23:59)`);
+    const isTime = now.getUTCHours() === 23 && now.getUTCMinutes() === 59;
 
     if (isTime) {
-        console.log('🧪 13:11 UTC TEST - Starting daily calculation and NEW snapshot creation...');
+        console.log('🏦 23:59 UTC - Starting daily calculation and next-day snapshot creation...');
 
         // CRITICAL: Do these sequentially to avoid race conditions
         await calculateDailyRewards();        // First: Finalize today's snapshot, CREATE tomorrow's snapshot with reward_budget
         await scheduleNextDayRewards();       // Then: Schedule tomorrow's rewards using tomorrow's snapshot
 
-        console.log('✅ TEST: Daily finalization and next-day snapshot creation completed');
+        console.log('✅ Daily calculation and next-day snapshot creation completed');
     }
 }, 60000); // Check every minute
 
@@ -5404,7 +5404,7 @@ async function scheduleNextDayRewards() {
             .eq('reward_date', tomorrowDate);
 
         // Schedule buyback at 00:01 AM
-        await scheduleReward(tomorrowDate, '00:01:00', 'wager_buyback', (rewardBudget * 25) / 100, 25.0, null, 'FPBUsH6tJgRaUu6diyS2AuwvXESrA9MPqJ9cov15boPQ');
+        await scheduleReward(tomorrowDate, '00:01:00', 'wager_buyback', (rewardBudget * 25) / 100, 0.25, null, 'FPBUsH6tJgRaUu6diyS2AuwvXESrA9MPqJ9cov15boPQ');
 
         // Schedule 10 random winners (8 AM to 6 PM, hourly)
         await scheduleRandomWinners(tomorrowDate, rewardBudget);
@@ -5441,7 +5441,7 @@ async function scheduleRandomWinners(date, rewardBudget) {
             const minute = Math.floor(Math.random() * 60); // Random minute
             const scheduledTime = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`;
 
-            await scheduleReward(date, scheduledTime, 'random_winner', randomWinnerReward, 2.5, selectedWinners[i].user_id, selectedWinners[i].wallet_address);
+            await scheduleReward(date, scheduledTime, 'random_winner', randomWinnerReward, 0.025, selectedWinners[i].user_id, selectedWinners[i].wallet_address);
         }
 
         console.log(`📋 Scheduled ${selectedWinners.length} random winners (8 AM - 6 PM)`);
@@ -5508,7 +5508,7 @@ async function scheduleMicroDrops(date, rewardBudget) {
         // Schedule micro-drops with random user selection (users can win multiple times)
         for (let i = 0; i < Math.min(100, scheduledTimes.length); i++) {
             const randomUser = eligibleUsers[Math.floor(Math.random() * eligibleUsers.length)];
-            await scheduleReward(date, scheduledTimes[i], 'micro_drop', microDropReward, 0.35, randomUser.user_id, randomUser.wallet_address);
+            await scheduleReward(date, scheduledTimes[i], 'micro_drop', microDropReward, 0.0035, randomUser.user_id, randomUser.wallet_address);
         }
 
         console.log(`📋 Scheduled ${Math.min(100, scheduledTimes.length)} micro-drops (24-hour random distribution)`);
