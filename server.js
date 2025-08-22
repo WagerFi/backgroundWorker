@@ -525,6 +525,13 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
 
                     // Try to build the transaction first to see what's happening
                     try {
+                        console.log(`  🔍 Building Anchor transaction with accounts:`, JSON.stringify(enhancedAccounts, (key, value) => {
+                            if (value && typeof value === 'object' && value.toBase58) {
+                                return value.toBase58();
+                            }
+                            return value;
+                        }, 2));
+
                         const anchorTx = await anchorProgram.methods
                             .resolveWagerWithReferrals(
                                 { [args.winner.toLowerCase()]: {} },
@@ -569,6 +576,19 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
 
                         // Final fallback - try the original RPC method
                         console.log(`  🔍 Final fallback - trying original Anchor RPC method...`);
+                        console.log(`  🔍 RPC method accounts:`, JSON.stringify(enhancedAccounts, (key, value) => {
+                            if (value && typeof value === 'object' && value.toBase58) {
+                                return value.toBase58();
+                            }
+                            return value;
+                        }, 2));
+                        console.log(`  🔍 RPC method signers: [${freshKeypair.publicKey.toString()}]`);
+                        console.log(`  🔍 RPC method args:`, {
+                            winner: { [args.winner.toLowerCase()]: {} },
+                            creatorReferrerPercentage: args.creatorReferrerPercentage || 0,
+                            acceptorReferrerPercentage: args.acceptorReferrerPercentage || 0
+                        });
+
                         result = await anchorProgram.methods
                             .resolveWagerWithReferrals(
                                 { [args.winner.toLowerCase()]: {} },
