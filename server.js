@@ -284,8 +284,13 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     const cleanEscrowPda = accounts.escrowPda.trim();
                     console.log(`🔍 Cleaned escrowPda: "${cleanEscrowPda}"`);
 
-                    // Use the SAME pattern as working instructions - direct PublicKey objects
-                    enhancedWagerPDA = new PublicKey(accounts.wagerId);
+                    // Derive wager PDA from wagerId (this creates the correct wager account type)
+                    enhancedWagerPDA = PublicKey.findProgramAddressSync(
+                        [Buffer.from("wager"), Buffer.from(accounts.wagerId)],
+                        WAGERFI_PROGRAM_ID
+                    )[0];
+
+                    // Use escrow address from database for escrow account
                     enhancedEscrowPDA = new PublicKey(cleanEscrowPda);
                     console.log(`✅ Successfully created PublicKey objects`);
                 } catch (error) {
@@ -418,7 +423,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 console.log(`  Public key: ${authorityKeypair.publicKey.toString()}`);
                 console.log(`  Is Keypair instance: ${authorityKeypair instanceof Keypair}`);
 
-                // Use the standard Anchor approach that works for other instructions
+                // Try using the provider's wallet instead of explicit signers
                 result = await anchorProgram.methods
                     .resolveWagerWithReferrals(
                         { [args.winner.toLowerCase()]: {} },
@@ -426,7 +431,6 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                         args.acceptorReferrerPercentage || 0
                     )
                     .accounts(enhancedAccounts)
-                    .signers([authorityKeypair])
                     .rpc();
                 break;
 
