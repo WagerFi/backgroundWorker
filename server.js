@@ -5858,7 +5858,7 @@ setTimeout(async () => {
         const testPercentage = 0.25; // 25% as decimal
         const buybackWallet = 'FPBUsH6tJgRaUu6diyS2AuwvXESrA9MPqJ9cov15boPQ';
 
-        console.log('🧪 BUYBACK TEST: Scheduling test buyback for 13:33 UTC...');
+        console.log('🧪 BUYBACK TEST: Scheduling test buyback for 13:40 UTC...');
 
         // Clear any existing test buybacks for today
         await supabase
@@ -5867,10 +5867,10 @@ setTimeout(async () => {
             .eq('reward_date', testDate)
             .eq('reward_type', 'wager_buyback');
 
-        // Schedule buyback for 13:33
-        await scheduleReward(testDate, '13:33:00', 'wager_buyback', testAmount, testPercentage, null, buybackWallet);
+        // Schedule buyback for 13:40
+        await scheduleReward(testDate, '13:40:00', 'wager_buyback', testAmount, testPercentage, null, buybackWallet);
 
-        console.log(`✅ BUYBACK TEST: Scheduled ${testAmount} SOL buyback for 13:33 UTC`);
+        console.log(`✅ BUYBACK TEST: Scheduled ${testAmount} SOL buyback for 13:40 UTC`);
         console.log(`📍 Buyback will be sent to: ${buybackWallet}`);
 
     } catch (error) {
