@@ -5571,7 +5571,7 @@ async function createTodaysSnapshot() {
             .select('*', { count: 'exact', head: true })
             .not('wallet_address', 'is', null);
 
-        // Create the snapshot
+        // Create the snapshot with only the basic required columns
         const { data: newSnapshot, error: createError } = await supabase
             .from('treasury_daily_snapshots')
             .insert({
@@ -5579,12 +5579,7 @@ async function createTodaysSnapshot() {
                 treasury_balance: treasuryBalance,
                 reward_budget: rewardBudget,
                 total_users: totalUsers || 0,
-                eligible_users: eligibleUsers || 0,
-                random_winners_total: 0,
-                milestone_rewards_total: 0,
-                micro_drops_total: 0,
-                buyback_total: 0,
-                total_distributed: 0
+                eligible_users: eligibleUsers || 0
             })
             .select()
             .single();
