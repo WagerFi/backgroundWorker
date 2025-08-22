@@ -255,7 +255,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 break;
 
             case 'resolve_wager_with_referrals':
-                console.log(`🔍 Using correct PDAs for resolve_wager_with_referrals (wagerId directly + database escrow)`);
+                console.log(`🔍 Using correct PDAs for resolve_wager_with_referrals (escrow address for both accounts)`);
                 console.log(`🔍 Debug - accounts.wagerId: ${accounts.wagerId}`);
                 console.log(`🔍 Debug - accounts.escrowPda: ${accounts.escrowPda}`);
                 console.log(`🔍 Debug - accounts.escrowPda type: ${typeof accounts.escrowPda}`);
@@ -268,10 +268,8 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     const cleanEscrowPda = accounts.escrowPda.trim();
                     console.log(`🔍 Cleaned escrowPda: "${cleanEscrowPda}"`);
 
-                    // Use the EXACT same approach as working instructions - use wagerId directly
-                    enhancedWagerPDA = new PublicKey(accounts.wagerId);
-
-                    // Use escrow address from database for escrow account
+                    // Use escrow address for both wager and escrow accounts (it's the actual Solana account)
+                    enhancedWagerPDA = new PublicKey(cleanEscrowPda);
                     enhancedEscrowPDA = new PublicKey(cleanEscrowPda);
                     console.log(`✅ Successfully created PublicKey objects`);
                 } catch (error) {
@@ -280,7 +278,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     throw error;
                 }
 
-                console.log(`🔍 Wager account (using wagerId directly): ${enhancedWagerPDA.toString()}`);
+                console.log(`🔍 Wager account (using escrow address): ${enhancedWagerPDA.toString()}`);
                 console.log(`🔍 Escrow account (from DB): ${enhancedEscrowPDA.toString()}`);
                 console.log(`🔍 Winner: ${accounts.winnerPubkey}`);
                 console.log(`🔍 Treasury: ${accounts.treasuryPubkey}`);
