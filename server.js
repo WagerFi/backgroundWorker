@@ -476,14 +476,24 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     console.log(`  Transaction instructions: ${manualTx.instructions.length}`);
                     console.log(`  Transaction signers required: ${manualTx.signatures.length}`);
 
-                    // Set fee payer and recent blockhash
+                    // Set fee payer and recent blockhash BEFORE signing
                     manualTx.feePayer = freshKeypair.publicKey;
                     manualTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+
+                    console.log(`  After setting fee payer: ${manualTx.feePayer?.toString()}`);
+                    console.log(`  Recent blockhash: ${manualTx.recentBlockhash}`);
+
+                    // Add the authority as a signer to the transaction
+                    console.log(`  Adding authority signer: ${freshKeypair.publicKey.toString()}`);
 
                     console.log(`  Attempting to sign manual transaction...`);
                     manualTx.sign(freshKeypair);
                     console.log(`  ✅ Manual transaction signed successfully`);
                     console.log(`  Final signatures: ${manualTx.signatures.length}`);
+                    console.log(`  Signature details:`, manualTx.signatures.map(sig => ({
+                        publicKey: sig.publicKey.toString(),
+                        signature: sig.signature ? 'Present' : 'Missing'
+                    })));
 
                     // Try to send the manual transaction
                     console.log(`  Attempting to send manual transaction...`);
@@ -498,17 +508,77 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
 
                 } catch (manualError) {
                     console.error(`  ❌ Manual transaction failed:`, manualError);
+                    console.log(`  Error details:`, manualError.message);
+                    if (manualError.logs) {
+                        console.log(`  Transaction logs:`, manualError.logs);
+                    }
                     console.log(`  Falling back to Anchor RPC method...`);
 
-                    result = await anchorProgram.methods
-                        .resolveWagerWithReferrals(
-                            { [args.winner.toLowerCase()]: {} },
-                            args.creatorReferrerPercentage || 0,
-                            args.acceptorReferrerPercentage || 0
-                        )
-                        .accounts(enhancedAccounts)
-                        .signers([freshKeypair])  // Use the fresh keypair to ensure it's properly constructed
-                        .rpc();
+                    console.log(`  🔍 Anchor RPC fallback - Building transaction with Anchor...`);
+                    console.log(`  Using accounts:`, JSON.stringify(enhancedAccounts, (key, value) => {
+                        if (value && typeof value === 'object' && value.toBase58) {
+                            return value.toBase58();
+                        }
+                        return value;
+                    }, 2));
+                    console.log(`  Using signers: [${freshKeypair.publicKey.toString()}]`);
+
+                    // Try to build the transaction first to see what's happening
+                    try {
+                        const anchorTx = await anchorProgram.methods
+                            .resolveWagerWithReferrals(
+                                { [args.winner.toLowerCase()]: {} },
+                                args.creatorReferrerPercentage || 0,
+                                args.acceptorReferrerPercentage || 0
+                            )
+                            .accounts(enhancedAccounts)
+                            .transaction();
+
+                        console.log(`  ✅ Anchor transaction built successfully`);
+                        console.log(`  Anchor tx fee payer: ${anchorTx.feePayer?.toString()}`);
+                        console.log(`  Anchor tx instructions: ${anchorTx.instructions.length}`);
+                        console.log(`  Anchor tx signers required: ${anchorTx.signatures.length}`);
+
+                        // Set fee payer and recent blockhash
+                        anchorTx.feePayer = freshKeypair.publicKey;
+                        anchorTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+
+                        console.log(`  After setting fee payer: ${anchorTx.feePayer?.toString()}`);
+
+                        // Sign the transaction
+                        anchorTx.sign(freshKeypair);
+                        console.log(`  ✅ Anchor transaction signed successfully`);
+                        console.log(`  Final signatures: ${anchorTx.signatures.length}`);
+
+                        // Send the signed transaction
+                        const anchorSignature = await connection.sendTransaction(anchorTx, [freshKeypair]);
+                        console.log(`  ✅ Anchor transaction sent successfully: ${anchorSignature}`);
+
+                        // Wait for confirmation
+                        const confirmation = await connection.confirmTransaction(anchorSignature, 'confirmed');
+                        console.log(`  ✅ Anchor transaction confirmed:`, confirmation);
+
+                        result = anchorSignature;
+
+                    } catch (anchorError) {
+                        console.error(`  ❌ Anchor transaction building/sending failed:`, anchorError);
+                        console.log(`  Error details:`, anchorError.message);
+                        if (anchorError.logs) {
+                            console.log(`  Transaction logs:`, anchorError.logs);
+                        }
+
+                        // Final fallback - try the original RPC method
+                        console.log(`  🔍 Final fallback - trying original Anchor RPC method...`);
+                        result = await anchorProgram.methods
+                            .resolveWagerWithReferrals(
+                                { [args.winner.toLowerCase()]: {} },
+                                args.creatorReferrerPercentage || 0,
+                                args.acceptorReferrerPercentage || 0
+                            )
+                            .accounts(enhancedAccounts)
+                            .signers([freshKeypair])
+                            .rpc();
+                    }
                 }
                 break;
 
