@@ -5525,9 +5525,7 @@ async function getTodaySnapshotId() {
         .insert({
             snapshot_date: today,
             treasury_balance: 0, // Will be updated by daily calculation
-            reward_budget: 0,
-            total_users: 0,
-            eligible_users: 0
+            reward_budget: 0
         })
         .select('id')
         .single();
@@ -5561,25 +5559,13 @@ async function createTodaysSnapshot() {
         const treasuryBalance = 100.0; // You can update this with actual balance
         const rewardBudget = treasuryBalance * 0.02; // 2% daily reward budget
 
-        // Get user counts
-        const { count: totalUsers } = await supabase
-            .from('users')
-            .select('*', { count: 'exact', head: true });
-
-        const { count: eligibleUsers } = await supabase
-            .from('users')
-            .select('*', { count: 'exact', head: true })
-            .not('wallet_address', 'is', null);
-
-        // Create the snapshot with only the basic required columns
+        // Create the snapshot with only the absolute minimum columns that should exist
         const { data: newSnapshot, error: createError } = await supabase
             .from('treasury_daily_snapshots')
             .insert({
                 snapshot_date: today,
                 treasury_balance: treasuryBalance,
-                reward_budget: rewardBudget,
-                total_users: totalUsers || 0,
-                eligible_users: eligibleUsers || 0
+                reward_budget: rewardBudget
             })
             .select()
             .single();
@@ -5592,8 +5578,6 @@ async function createTodaysSnapshot() {
         console.log(`✅ Created today's snapshot: ID ${newSnapshot.id} for ${today}`);
         console.log(`   Treasury Balance: ${treasuryBalance} SOL`);
         console.log(`   Reward Budget: ${rewardBudget} SOL`);
-        console.log(`   Total Users: ${totalUsers}`);
-        console.log(`   Eligible Users: ${eligibleUsers}`);
 
         return newSnapshot.id;
     } catch (error) {
