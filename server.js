@@ -100,19 +100,11 @@ console.log('📋 Loaded WagerFi IDL with instructions:', idl.instructions.map(i
 const anchorProvider = new AnchorProvider(connection, {
     publicKey: authorityKeypair.publicKey,
     signTransaction: async (tx) => {
-        console.log(`🔍 AnchorProvider.wallet.signTransaction called for tx:`, tx.signatures.length, 'signatures');
-        console.log(`  Fee payer: ${tx.feePayer?.toString()}`);
         tx.sign(authorityKeypair);
-        console.log(`  After signing: ${tx.signatures.length} signatures`);
         return tx;
     },
     signAllTransactions: async (txs) => {
-        console.log(`🔍 AnchorProvider.wallet.signAllTransactions called for ${txs.length} transactions`);
-        txs.forEach((tx, i) => {
-            console.log(`  Signing tx ${i}: ${tx.signatures.length} signatures`);
-            tx.sign(authorityKeypair);
-            console.log(`  After signing tx ${i}: ${tx.signatures.length} signatures`);
-        });
+        txs.forEach(tx => tx.sign(authorityKeypair));
         return txs;
     }
 }, { commitment: 'confirmed' });
@@ -120,30 +112,6 @@ const anchorProvider = new AnchorProvider(connection, {
 console.log('🔍 Provider wallet public key:', anchorProvider.wallet.publicKey.toString());
 console.log('🔍 Authority keypair public key:', authorityKeypair.publicKey.toString());
 console.log('🔍 Keys match:', anchorProvider.wallet.publicKey.equals(authorityKeypair.publicKey));
-
-// Test the provider's signing methods
-console.log('🔍 Testing AnchorProvider signing methods...');
-try {
-    const testTx = new Transaction();
-    testTx.add(SystemProgram.transfer({
-        fromPubkey: authorityKeypair.publicKey,
-        toPubkey: authorityKeypair.publicKey,
-        lamports: 0
-    }));
-    testTx.feePayer = authorityKeypair.publicKey;
-    testTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-
-    console.log('  Test transaction created, testing provider.wallet.signTransaction...');
-    const signedTx = await anchorProvider.wallet.signTransaction(testTx);
-    console.log('  ✅ Provider.wallet.signTransaction successful, signatures:', signedTx.signatures.length);
-
-    // Test if the provider can sign the transaction
-    console.log('  Testing provider.wallet.signTransaction...');
-    const providerSignedTx = await anchorProvider.wallet.signTransaction(testTx);
-    console.log('  ✅ Provider.wallet.signTransaction successful, signatures:', providerSignedTx.signatures.length);
-} catch (error) {
-    console.error('  ❌ Provider signing test failed:', error);
-}
 
 const anchorProgram = new Program(idl, WAGERFI_PROGRAM_ID, anchorProvider);
 console.log('🔗 Anchor program initialized successfully');
@@ -347,37 +315,20 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     throw validationError;
                 }
 
-                // CRITICAL FIX: Use array order instead of object to ensure correct account positioning
-                // IDL expects: [wager, escrow, winner, creator, treasury, creatorReferrer, acceptorReferrer, authority]
-                const enhancedAccountsArray = [
-                    enhancedWagerPDA,                                    // 0: wager
-                    enhancedEscrowPDA,                                   // 1: escrow  
-                    new PublicKey(accounts.winnerPubkey),                // 2: winner
-                    new PublicKey(accounts.creatorPubkey),               // 3: creator
-                    new PublicKey(accounts.treasuryPubkey),              // 4: treasury
-                    accounts.creatorReferrerPubkey ?                     // 5: creatorReferrer
-                        new PublicKey(accounts.creatorReferrerPubkey) :
-                        new PublicKey(accounts.treasuryPubkey),
-                    accounts.acceptorReferrerPubkey ?                    // 6: acceptorReferrer
-                        new PublicKey(accounts.acceptorReferrerPubkey) :
-                        new PublicKey(accounts.treasuryPubkey),
-                    authorityKeypair.publicKey                           // 7: authority (LAST POSITION)
-                ];
-
-                // Keep the object for logging purposes
                 const enhancedAccounts = {
                     wager: enhancedWagerPDA,
                     escrow: enhancedEscrowPDA,
                     winner: new PublicKey(accounts.winnerPubkey),
-                    creator: new PublicKey(accounts.creatorPubkey),
+                    creator: new PublicKey(accounts.creatorPubkey), // Add creator for rent reclaim
                     treasury: new PublicKey(accounts.treasuryPubkey),
+                    // Always provide both referrer accounts (use treasury as placeholder when none exists)
                     creatorReferrer: accounts.creatorReferrerPubkey ?
                         new PublicKey(accounts.creatorReferrerPubkey) :
-                        new PublicKey(accounts.treasuryPubkey),
+                        new PublicKey(accounts.treasuryPubkey), // Treasury placeholder (gets 0%)
                     acceptorReferrer: accounts.acceptorReferrerPubkey ?
                         new PublicKey(accounts.acceptorReferrerPubkey) :
-                        new PublicKey(accounts.treasuryPubkey),
-                    authority: authorityKeypair.publicKey,
+                        new PublicKey(accounts.treasuryPubkey), // Treasury placeholder (gets 0%)
+                    authority: authorityKeypair.publicKey, // Include authority in accounts like other working instructions
                 };
 
                 console.log(`🔍 Final enhancedAccounts object (with authority):`, JSON.stringify(enhancedAccounts, (key, value) => {
@@ -431,245 +382,15 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 console.log(`  Public key matches: ${freshKeypair.publicKey.equals(authorityKeypair.publicKey)}`);
                 console.log(`  Is Keypair instance: ${freshKeypair instanceof Keypair}`);
 
-                // Update the authority account to use the fresh keypair's public key
-                enhancedAccounts.authority = freshKeypair.publicKey;
-                enhancedAccountsArray[7] = freshKeypair.publicKey; // Update array position 7 (authority)
-
-                console.log(`🔍 Final authority account verification:`);
-                console.log(`  EnhancedAccounts.authority: ${enhancedAccounts.authority.toString()}`);
-                console.log(`  Fresh keypair public key: ${freshKeypair.publicKey.toString()}`);
-                console.log(`  Keys match: ${enhancedAccounts.authority.equals(freshKeypair.publicKey)}`);
-
-                console.log(`🔍 Account array order (CRITICAL for IDL positioning):`);
-                enhancedAccountsArray.forEach((account, index) => {
-                    const accountName = ['wager', 'escrow', 'winner', 'creator', 'treasury', 'creatorReferrer', 'acceptorReferrer', 'authority'][index];
-                    console.log(`  ${index}: ${accountName} = ${account.toString()}`);
-                });
-
-                // Add comprehensive transaction debugging
-                console.log(`🔍 Transaction execution debug:`);
-                console.log(`  Using fresh keypair: ${freshKeypair.publicKey.toString()}`);
-                console.log(`  Fresh keypair secretKey length: ${freshKeypair.secretKey.length}`);
-                console.log(`  Fresh keypair secretKey type: ${typeof freshKeypair.secretKey}`);
-
-                // Test transaction signing with fresh keypair
-                try {
-                    const testTx = new Transaction();
-                    testTx.add(SystemProgram.transfer({
-                        fromPubkey: freshKeypair.publicKey,
-                        toPubkey: freshKeypair.publicKey,
-                        lamports: 0
-                    }));
-                    testTx.feePayer = freshKeypair.publicKey;
-                    testTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-
-                    console.log(`  Test transaction created, attempting to sign...`);
-                    testTx.sign(freshKeypair);
-                    console.log(`  ✅ Test transaction signed successfully with fresh keypair`);
-                } catch (testError) {
-                    console.error(`  ❌ Test transaction signing failed:`, testError);
-                }
-
-                // Log the exact method call
-                console.log(`🔍 Calling anchorProgram.methods.resolveWagerWithReferrals with:`);
-                console.log(`  Winner: ${args.winner}`);
-                console.log(`  Creator referrer percentage: ${args.creatorReferrerPercentage || 0}`);
-                console.log(`  Acceptor referrer percentage: ${args.acceptorReferrerPercentage || 0}`);
-                console.log(`  Accounts:`, JSON.stringify(enhancedAccounts, (key, value) => {
-                    if (value && typeof value === 'object' && value.toBase58) {
-                        return value.toBase58();
-                    }
-                    return value;
-                }, 2));
-                console.log(`  Signers: [${freshKeypair.publicKey.toString()}]`);
-
-                // CRITICAL FIX: Use pure Solana web3.js to bypass Anchor's transaction building issues
-                console.log(`🔍 Attempting PURE SOLANA transaction building (bypassing Anchor)...`);
-                try {
-                    // Get the instruction from Anchor but build transaction manually
-                    // CRITICAL: We need to pass the accounts to the instruction, not just extract it
-                    const instruction = await anchorProgram.methods
-                        .resolveWagerWithReferrals(
-                            { [args.winner.toLowerCase()]: {} },
-                            args.creatorReferrerPercentage || 0,
-                            args.acceptorReferrerPercentage || 0
-                        )
-                        .accounts(enhancedAccountsArray) // CRITICAL: Pass accounts here!
-                        .instruction();
-
-                    console.log(`  ✅ Instruction extracted from Anchor successfully`);
-                    console.log(`  Instruction program ID: ${instruction.programId.toString()}`);
-                    console.log(`  Instruction accounts: ${instruction.accounts.length}`);
-
-                    // CRITICAL DEBUG: Log the exact accounts being passed to the instruction
-                    console.log(`  🔍 Instruction accounts details:`);
-                    instruction.accounts.forEach((acc, index) => {
-                        const accountName = ['wager', 'escrow', 'winner', 'creator', 'treasury', 'creatorReferrer', 'acceptorReferrer', 'authority'][index];
-                        console.log(`    ${index}: ${accountName} = ${acc.pubkey.toString()}, isSigner: ${acc.isSigner}, isMut: ${acc.isMut}`);
-                    });
-
-                    // Build transaction manually with Solana web3.js
-                    const manualTx = new Transaction();
-                    manualTx.add(instruction);
-
-                    // Set fee payer and recent blockhash BEFORE signing
-                    manualTx.feePayer = freshKeypair.publicKey;
-                    manualTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-
-                    console.log(`  ✅ Manual transaction built successfully`);
-                    console.log(`  Transaction fee payer: ${manualTx.feePayer?.toString()}`);
-                    console.log(`  Transaction instructions: ${manualTx.instructions.length}`);
-                    console.log(`  Transaction signers required: ${manualTx.signatures.length}`);
-                    console.log(`  Recent blockhash: ${manualTx.recentBlockhash}`);
-
-                    // CRITICAL: Add the authority as a signer to the transaction
-                    console.log(`  Adding authority signer: ${freshKeypair.publicKey.toString()}`);
-                    console.log(`  Fresh keypair secretKey length: ${freshKeypair.secretKey.length}`);
-
-                    // Sign manually with Solana web3.js
-                    console.log(`  Attempting to sign manual transaction...`);
-                    manualTx.sign(freshKeypair);
-                    console.log(`  ✅ Manual transaction signed successfully`);
-                    console.log(`  Final signatures: ${manualTx.signatures.length}`);
-                    console.log(`  Signature details:`, manualTx.signatures.map(sig => ({
-                        publicKey: sig.publicKey.toString(),
-                        signature: sig.signature ? 'Present' : 'Missing'
-                    })));
-
-                    // Verify the signature is actually present
-                    const authoritySignature = manualTx.signatures.find(sig =>
-                        sig.publicKey.equals(freshKeypair.publicKey)
-                    );
-                    if (authoritySignature && authoritySignature.signature) {
-                        console.log(`  ✅ Authority signature verified: ${authoritySignature.signature.slice(0, 8)}...`);
-                    } else {
-                        console.log(`  ❌ Authority signature missing!`);
-                        throw new Error('Authority signature not found in transaction');
-                    }
-
-                    // Try to send the manual transaction
-                    console.log(`  Attempting to send manual transaction...`);
-                    const manualSignature = await connection.sendTransaction(manualTx, [freshKeypair]);
-                    console.log(`  ✅ Manual transaction sent successfully: ${manualSignature}`);
-
-                    // Wait for confirmation
-                    const confirmation = await connection.confirmTransaction(manualSignature, 'confirmed');
-                    console.log(`  ✅ Manual transaction confirmed:`, confirmation);
-
-                    result = manualSignature;
-
-                } catch (manualError) {
-                    console.error(`  ❌ Manual transaction failed:`, manualError);
-                    console.log(`  Error details:`, manualError.message);
-                    if (manualError.logs) {
-                        console.log(`  Transaction logs:`, manualError.logs);
-                    }
-                    console.log(`  Falling back to Anchor RPC method...`);
-
-                    console.log(`  🔍 Anchor RPC fallback - Building transaction with Anchor...`);
-                    console.log(`  Using accounts:`, JSON.stringify(enhancedAccounts, (key, value) => {
-                        if (value && typeof value === 'object' && value.toBase58) {
-                            return value.toBase58();
-                        }
-                        return value;
-                    }, 2));
-                    console.log(`  Using signers: [${freshKeypair.publicKey.toString()}]`);
-
-                    // CRITICAL FIX: Use pure Solana web3.js to bypass Anchor's transaction building
-                    try {
-                        console.log(`  🔍 Building PURE SOLANA transaction (bypassing Anchor)...`);
-
-                        // Extract instruction from Anchor
-                        // CRITICAL: We need to pass the accounts to the instruction, not just extract it
-                        const fallbackInstruction = await anchorProgram.methods
-                            .resolveWagerWithReferrals(
-                                { [args.winner.toLowerCase()]: {} },
-                                args.creatorReferrerPercentage || 0,
-                                args.acceptorReferrerPercentage || 0
-                            )
-                            .accounts(enhancedAccountsArray) // CRITICAL: Pass accounts here!
-                            .instruction();
-
-                        console.log(`  ✅ Fallback instruction extracted successfully`);
-                        console.log(`  Instruction program ID: ${fallbackInstruction.programId.toString()}`);
-                        console.log(`  Instruction accounts: ${fallbackInstruction.accounts.length}`);
-
-                        // CRITICAL DEBUG: Log the exact accounts being passed to the instruction
-                        console.log(`  🔍 Fallback instruction accounts details:`);
-                        fallbackInstruction.accounts.forEach((acc, index) => {
-                            const accountName = ['wager', 'escrow', 'winner', 'creator', 'treasury', 'creatorReferrer', 'acceptorReferrer', 'authority'][index];
-                            console.log(`    ${index}: ${accountName} = ${acc.pubkey.toString()}, isSigner: ${acc.isSigner}, isMut: ${acc.isMut}`);
-                        });
-
-                        // Build transaction manually with Solana web3.js
-                        const fallbackTx = new Transaction();
-                        fallbackTx.add(fallbackInstruction);
-                        fallbackTx.feePayer = freshKeypair.publicKey;
-                        fallbackTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-
-                        console.log(`  ✅ Fallback transaction built successfully`);
-                        console.log(`  Fallback tx fee payer: ${fallbackTx.feePayer?.toString()}`);
-                        console.log(`  Fallback tx instructions: ${fallbackTx.instructions.length}`);
-
-                        // Sign manually with Solana web3.js
-                        fallbackTx.sign(freshKeypair);
-                        console.log(`  ✅ Fallback transaction signed successfully`);
-                        console.log(`  Final signatures: ${fallbackTx.signatures.length}`);
-
-                        // Verify the signature is actually present
-                        const authoritySignature = fallbackTx.signatures.find(sig =>
-                            sig.publicKey.equals(freshKeypair.publicKey)
-                        );
-                        if (authoritySignature && authoritySignature.signature) {
-                            console.log(`  ✅ Authority signature verified: ${authoritySignature.signature.slice(0, 8)}...`);
-                        } else {
-                            console.log(`  ❌ Authority signature missing!`);
-                            throw new Error('Authority signature not found in fallback transaction');
-                        }
-
-                        // Send the signed transaction
-                        const fallbackSignature = await connection.sendTransaction(fallbackTx, [freshKeypair]);
-                        console.log(`  ✅ Fallback transaction sent successfully: ${fallbackSignature}`);
-
-                        // Wait for confirmation
-                        const confirmation = await connection.confirmTransaction(fallbackSignature, 'confirmed');
-                        console.log(`  ✅ Fallback transaction confirmed:`, confirmation);
-
-                        result = fallbackSignature;
-
-                    } catch (fallbackError) {
-                        console.error(`  ❌ Fallback approach failed:`, fallbackError);
-                        console.log(`  Error details:`, fallbackError.message);
-                        if (fallbackError.logs) {
-                            console.log(`  Transaction logs:`, fallbackError.logs);
-                        }
-
-                        // Final fallback - try the original RPC method
-                        console.log(`  🔍 Final fallback - trying original Anchor RPC method...`);
-                        console.log(`  🔍 RPC method accounts:`, JSON.stringify(enhancedAccounts, (key, value) => {
-                            if (value && typeof value === 'object' && value.toBase58) {
-                                return value.toBase58();
-                            }
-                            return value;
-                        }, 2));
-                        console.log(`  🔍 RPC method signers: [${freshKeypair.publicKey.toString()}]`);
-                        console.log(`  🔍 RPC method args:`, {
-                            winner: { [args.winner.toLowerCase()]: {} },
-                            creatorReferrerPercentage: args.creatorReferrerPercentage || 0,
-                            acceptorReferrerPercentage: args.acceptorReferrerPercentage || 0
-                        });
-
-                        result = await anchorProgram.methods
-                            .resolveWagerWithReferrals(
-                                { [args.winner.toLowerCase()]: {} },
-                                args.creatorReferrerPercentage || 0,
-                                args.acceptorReferrerPercentage || 0
-                            )
-                            .accounts(enhancedAccountsArray) // Use array for correct order
-                            .signers([freshKeypair])
-                            .rpc();
-                    }
-                }
+                result = await anchorProgram.methods
+                    .resolveWagerWithReferrals(
+                        { [args.winner.toLowerCase()]: {} },
+                        args.creatorReferrerPercentage || 0,
+                        args.acceptorReferrerPercentage || 0
+                    )
+                    .accounts(enhancedAccounts)
+                    .signers([freshKeypair])  // Use the fresh keypair to ensure it's properly constructed
+                    .rpc();
                 break;
 
             default:
