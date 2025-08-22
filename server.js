@@ -680,6 +680,126 @@ app.post('/admin/test-daily-flow', async (req, res) => {
     }
 });
 
+// Schedule today's rewards using the new fair distribution algorithm
+app.post('/admin/schedule-todays-rewards', async (req, res) => {
+    try {
+        const { testBudget = null } = req.body;
+        console.log('📅 Scheduling TODAY\'s rewards with new fair distribution...');
+
+        const today = new Date().toISOString().split('T')[0];
+
+        // Get or create today's snapshot
+        let snapshot;
+        if (testBudget) {
+            // Get treasury balance and create/update snapshot with test budget
+            const treasuryBalance = await getTreasuryBalance();
+
+            const { data: existingSnapshot, error: checkError } = await supabase
+                .from('treasury_daily_snapshots')
+                .select('*')
+                .eq('snapshot_date', today)
+                .single();
+
+            if (existingSnapshot) {
+                // Update existing snapshot with test budget
+                const { error: updateError } = await supabase
+                    .from('treasury_daily_snapshots')
+                    .update({ reward_budget: testBudget })
+                    .eq('snapshot_date', today);
+
+                if (updateError) {
+                    return res.status(500).json({ success: false, error: `Update error: ${updateError.message}` });
+                }
+
+                snapshot = { ...existingSnapshot, reward_budget: testBudget };
+                console.log(`✅ Updated today's snapshot with test budget: ${testBudget} SOL`);
+            } else {
+                // Create new snapshot
+                const { data: newSnapshot, error: insertError } = await supabase
+                    .from('treasury_daily_snapshots')
+                    .insert({
+                        snapshot_date: today,
+                        treasury_balance_start: treasuryBalance - testBudget,
+                        treasury_balance_end: treasuryBalance,
+                        daily_earnings: testBudget,
+                        reward_budget: testBudget,
+                        is_calculated: true
+                    })
+                    .select()
+                    .single();
+
+                if (insertError) {
+                    return res.status(500).json({ success: false, error: `Insert error: ${insertError.message}` });
+                }
+
+                snapshot = newSnapshot;
+                console.log(`✅ Created today's snapshot with test budget: ${testBudget} SOL`);
+            }
+        } else {
+            // Use existing snapshot
+            const { data: existingSnapshot, error: snapshotError } = await supabase
+                .from('treasury_daily_snapshots')
+                .select('*')
+                .eq('snapshot_date', today)
+                .single();
+
+            if (snapshotError || !existingSnapshot) {
+                return res.status(404).json({ success: false, error: 'No snapshot found for today. Please provide testBudget or run daily calculation first.' });
+            }
+
+            snapshot = existingSnapshot;
+        }
+
+        const rewardBudget = parseFloat(snapshot.reward_budget);
+
+        if (rewardBudget <= 0) {
+            return res.status(400).json({ success: false, error: 'No reward budget available for today' });
+        }
+
+        console.log(`💰 Using reward budget: ${rewardBudget} SOL`);
+
+        // Clear any existing scheduled rewards for today
+        await supabase
+            .from('scheduled_reward_distributions')
+            .delete()
+            .eq('reward_date', today);
+
+        // Schedule buyback at next minute
+        const now = new Date();
+        const nextMinute = new Date(now.getTime() + 2 * 60 * 1000); // 2 minutes from now
+        const buybackTime = `${nextMinute.getHours().toString().padStart(2, '0')}:${nextMinute.getMinutes().toString().padStart(2, '0')}:00`;
+
+        await scheduleReward(today, buybackTime, 'wager_buyback', (rewardBudget * 25) / 100, 0.25, null, 'FPBUsH6tJgRaUu6diyS2AuwvXESrA9MPqJ9cov15boPQ');
+
+        // Schedule 10 random winners using NEW fair distribution
+        await scheduleRandomWinners(today, rewardBudget);
+
+        // Schedule 100 micro-drops using NEW fair distribution (the fixed algorithm!)
+        await scheduleMicroDrops(today, rewardBudget);
+
+        // Get scheduled count
+        const { count: scheduledCount } = await supabase
+            .from('scheduled_reward_distributions')
+            .select('*', { count: 'exact', head: true })
+            .eq('reward_date', today);
+
+        console.log(`✅ Scheduled ${scheduledCount} rewards for today with NEW fair distribution algorithm`);
+
+        res.json({
+            success: true,
+            message: 'Today\'s rewards scheduled with fair distribution',
+            reward_budget: rewardBudget,
+            scheduled_count: scheduledCount,
+            snapshot_date: today,
+            buyback_time: buybackTime
+        });
+
+    } catch (error) {
+        console.error('❌ Error scheduling today\'s rewards:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 app.post('/admin/distribute-rewards', async (req, res) => {
     try {
         await distributePendingRewards();
