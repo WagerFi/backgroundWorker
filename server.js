@@ -401,14 +401,16 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     throw new Error(`Treasury mismatch! Program expects: ${HARDCODED_TREASURY}, but got: ${TREASURY_WALLET.toString()}`);
                 }
 
-                // Ensure the authority account in enhancedAccounts matches the signer
-                enhancedAccounts.authority = freshKeypair.publicKey;
+                // Ensure the authority account in enhancedAccounts matches the provider
+                enhancedAccounts.authority = authorityKeypair.publicKey;
 
                 console.log(`🔍 Final account verification before transaction:`);
                 console.log(`  Authority in accounts: ${enhancedAccounts.authority.toString()}`);
-                console.log(`  Signer public key: ${freshKeypair.publicKey.toString()}`);
-                console.log(`  Keys match: ${enhancedAccounts.authority.equals(freshKeypair.publicKey)}`);
+                console.log(`  Provider authority: ${authorityKeypair.publicKey.toString()}`);
+                console.log(`  Keys match: ${enhancedAccounts.authority.equals(authorityKeypair.publicKey)}`);
 
+                // CRITICAL FIX: Use the same keypair object that the provider was configured with
+                // Don't use .signers() at all - let the provider handle signing automatically
                 result = await anchorProgram.methods
                     .resolveWagerWithReferrals(
                         { [args.winner.toLowerCase()]: {} },
@@ -416,7 +418,6 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                         args.acceptorReferrerPercentage || 0
                     )
                     .accounts(enhancedAccounts)
-                    .signers([freshKeypair])  // Use the fresh keypair to ensure it's properly constructed
                     .rpc();
                 break;
 
