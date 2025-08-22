@@ -349,9 +349,13 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     authority: authorityKeypair.publicKey,
                 };
 
-                // Always provide both referrer accounts - use treasury as placeholder when no referrer exists
-                enhancedAccounts.creatorReferrer = new PublicKey(accounts.creatorReferrerPubkey);
-                enhancedAccounts.acceptorReferrer = new PublicKey(accounts.acceptorReferrerPubkey);
+                // Only add referrer accounts if they exist and are not the treasury
+                if (accounts.creatorReferrerPubkey && accounts.creatorReferrerPubkey !== accounts.treasuryPubkey) {
+                    enhancedAccounts.creatorReferrer = new PublicKey(accounts.creatorReferrerPubkey);
+                }
+                if (accounts.acceptorReferrerPubkey && accounts.acceptorReferrerPubkey !== accounts.treasuryPubkey) {
+                    enhancedAccounts.acceptorReferrer = new PublicKey(accounts.acceptorReferrerPubkey);
+                }
 
                 console.log(`🔍 Referrer accounts added:`, {
                     creatorReferrer: enhancedAccounts.creatorReferrer.toString(),
