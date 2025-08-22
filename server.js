@@ -456,7 +456,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
 
                 // Send manually
                 console.log('🔧 Sending transaction manually...');
-                result = await connection.sendAndConfirm(tx, [authorityKeypair]);
+                result = await connection.sendAndConfirmTransaction(tx, [authorityKeypair]);
                 console.log('✅ Manual transaction successful:', result);
                 break;
 
