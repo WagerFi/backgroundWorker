@@ -109,9 +109,8 @@ const idl = JSON.parse(readFileSync(idlPath, 'utf8'));
 
 console.log('📋 Loaded WagerFi IDL with instructions:', idl.instructions.map(i => i.name));
 
-// Create Anchor provider and program using the authority keypair directly
-// Note: We don't need to create a wallet interface since we'll pass the keypair to signers()
-const anchorProvider = new AnchorProvider(connection, {
+// Create a proper wallet object that Anchor expects
+const wallet = {
     publicKey: authorityKeypair.publicKey,
     signTransaction: async (tx) => {
         tx.sign(authorityKeypair);
@@ -121,7 +120,10 @@ const anchorProvider = new AnchorProvider(connection, {
         txs.forEach(tx => tx.sign(authorityKeypair));
         return txs;
     }
-}, { commitment: 'confirmed' });
+};
+
+// Create Anchor provider using the wallet object
+const anchorProvider = new AnchorProvider(connection, wallet, { commitment: 'confirmed' });
 
 console.log('🔍 Provider wallet public key:', anchorProvider.wallet.publicKey.toString());
 console.log('🔍 Authority keypair public key:', authorityKeypair.publicKey.toString());
@@ -421,7 +423,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 console.log(`  Public key: ${authorityKeypair.publicKey.toString()}`);
                 console.log(`  Is Keypair instance: ${authorityKeypair instanceof Keypair}`);
 
-                // Try without explicit signers - let the provider handle it
+                // Use the standard Anchor approach that works for other instructions
                 result = await anchorProgram.methods
                     .resolveWagerWithReferrals(
                         { [args.winner.toLowerCase()]: {} },
@@ -429,6 +431,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                         args.acceptorReferrerPercentage || 0
                     )
                     .accounts(enhancedAccounts)
+                    .signers([authorityKeypair])
                     .rpc();
                 break;
 
