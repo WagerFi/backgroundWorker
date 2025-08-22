@@ -62,25 +62,11 @@ if (AUTHORITY_PRIVATE_KEY) {
         console.log('🔍 Secret key buffer length:', secretKeyBuffer.length);
 
         authorityKeypair = Keypair.fromSecretKey(secretKeyBuffer);
-
-        // Add signTransaction method to authorityKeypair for Anchor compatibility
-        authorityKeypair.signTransaction = async (tx) => {
-            tx.sign(authorityKeypair);
-            return tx;
-        };
-
-        authorityKeypair.signAllTransactions = async (txs) => {
-            txs.forEach(tx => tx.sign(authorityKeypair));
-            return txs;
-        };
-
         console.log('🔍 Keypair created successfully');
         console.log('🔍 Public key:', authorityKeypair.publicKey.toString());
         console.log('🔍 Is Keypair instance:', authorityKeypair instanceof Keypair);
         console.log('🔍 Has secretKey property:', !!authorityKeypair.secretKey);
         console.log('🔍 SecretKey length:', authorityKeypair.secretKey?.length || 'undefined');
-        console.log('🔍 Has signTransaction method:', typeof authorityKeypair.signTransaction === 'function');
-        console.log('🔍 Has signAllTransactions method:', typeof authorityKeypair.signAllTransactions === 'function');
     } catch (error) {
         console.error('❌ Error creating keypair:', error);
         process.exit(1);
@@ -109,8 +95,9 @@ const idl = JSON.parse(readFileSync(idlPath, 'utf8'));
 
 console.log('📋 Loaded WagerFi IDL with instructions:', idl.instructions.map(i => i.name));
 
-// Create a proper wallet object that Anchor expects
-const wallet = {
+// Create Anchor provider and program using the authority keypair directly
+// Note: We don't need to create a wallet interface since we'll pass the keypair to signers()
+const anchorProvider = new AnchorProvider(connection, {
     publicKey: authorityKeypair.publicKey,
     signTransaction: async (tx) => {
         tx.sign(authorityKeypair);
@@ -120,10 +107,7 @@ const wallet = {
         txs.forEach(tx => tx.sign(authorityKeypair));
         return txs;
     }
-};
-
-// Create Anchor provider using the wallet object
-const anchorProvider = new AnchorProvider(connection, wallet, { commitment: 'confirmed' });
+}, { commitment: 'confirmed' });
 
 console.log('🔍 Provider wallet public key:', anchorProvider.wallet.publicKey.toString());
 console.log('🔍 Authority keypair public key:', authorityKeypair.publicKey.toString());
@@ -271,35 +255,14 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 break;
 
             case 'resolve_wager_with_referrals':
-                console.log(`🔍 Using correct PDAs for resolve_wager_with_referrals (wager PDA + escrow address)`);
-                console.log(`🔍 Debug - accounts.wagerId: ${accounts.wagerId}`);
-                console.log(`🔍 Debug - accounts.escrowPda: ${accounts.escrowPda}`);
-                console.log(`🔍 Debug - accounts.escrowPda type: ${typeof accounts.escrowPda}`);
-                console.log(`🔍 Debug - accounts.escrowPda length: ${accounts.escrowPda ? accounts.escrowPda.length : 'undefined'}`);
-                console.log(`🔍 Debug - accounts.escrowPda raw bytes: ${accounts.escrowPda ? Buffer.from(accounts.escrowPda).toString('hex') : 'undefined'}`);
+                console.log(`🔍 Deriving correct PDAs for resolve_wager_with_referrals`);
+                const enhancedWagerPDA = PublicKey.findProgramAddressSync(
+                    [Buffer.from("wager"), Buffer.from(accounts.wagerId)],
+                    WAGERFI_PROGRAM_ID
+                )[0];
+                const enhancedEscrowPDA = new PublicKey(accounts.escrowPda);
 
-                let enhancedWagerPDA, enhancedEscrowPDA;
-                try {
-                    // Clean up the escrow address - remove any whitespace or invalid characters
-                    const cleanEscrowPda = accounts.escrowPda.trim();
-                    console.log(`🔍 Cleaned escrowPda: "${cleanEscrowPda}"`);
-
-                    // Derive wager PDA from wagerId (this creates the correct wager account type)
-                    enhancedWagerPDA = PublicKey.findProgramAddressSync(
-                        [Buffer.from("wager"), Buffer.from(accounts.wagerId)],
-                        WAGERFI_PROGRAM_ID
-                    )[0];
-
-                    // Use escrow address from database for escrow account
-                    enhancedEscrowPDA = new PublicKey(cleanEscrowPda);
-                    console.log(`✅ Successfully created PublicKey objects`);
-                } catch (error) {
-                    console.error(`❌ Error creating PublicKey from escrowPda: "${accounts.escrowPda}"`);
-                    console.error(`❌ Error details:`, error.message);
-                    throw error;
-                }
-
-                console.log(`🔍 Wager account (derived PDA): ${enhancedWagerPDA.toString()}`);
+                console.log(`🔍 Wager account (derived): ${enhancedWagerPDA.toString()}`);
                 console.log(`🔍 Escrow account (from DB): ${enhancedEscrowPDA.toString()}`);
                 console.log(`🔍 Winner: ${accounts.winnerPubkey}`);
                 console.log(`🔍 Treasury: ${accounts.treasuryPubkey}`);
@@ -337,7 +300,6 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 };
 
                 try {
-                    validateAddress(accounts.escrowPda, 'Escrow');
                     validateAddress(accounts.winnerPubkey, 'Winner');
                     validateAddress(accounts.creatorPubkey, 'Creator');
                     validateAddress(accounts.treasuryPubkey, 'Treasury');
@@ -357,22 +319,17 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     wager: enhancedWagerPDA,
                     escrow: enhancedEscrowPDA,
                     winner: new PublicKey(accounts.winnerPubkey),
-                    creator: new PublicKey(accounts.creatorPubkey), // Add creator back - program requires it
-
+                    creator: new PublicKey(accounts.creatorPubkey), // Add creator for rent reclaim
                     treasury: new PublicKey(accounts.treasuryPubkey),
-
-                    // Add authority back - the program requires it in the accounts list
-                    authority: authorityKeypair.publicKey,
+                    // Always provide both referrer accounts (use treasury as placeholder when none exists)
+                    creatorReferrer: accounts.creatorReferrerPubkey ?
+                        new PublicKey(accounts.creatorReferrerPubkey) :
+                        new PublicKey(accounts.treasuryPubkey), // Treasury placeholder (gets 0%)
+                    acceptorReferrer: accounts.acceptorReferrerPubkey ?
+                        new PublicKey(accounts.acceptorReferrerPubkey) :
+                        new PublicKey(accounts.treasuryPubkey), // Treasury placeholder (gets 0%)
+                    authority: authorityKeypair.publicKey, // Include authority in accounts like other working instructions
                 };
-
-                // Always provide both referrer accounts - use treasury as placeholder when no referrer exists
-                enhancedAccounts.creatorReferrer = new PublicKey(accounts.creatorReferrerPubkey);
-                enhancedAccounts.acceptorReferrer = new PublicKey(accounts.acceptorReferrerPubkey);
-
-                console.log(`🔍 Referrer accounts added:`, {
-                    creatorReferrer: enhancedAccounts.creatorReferrer.toString(),
-                    acceptorReferrer: enhancedAccounts.acceptorReferrer.toString()
-                });
 
                 console.log(`🔍 Final enhancedAccounts object (with authority):`, JSON.stringify(enhancedAccounts, (key, value) => {
                     if (value && typeof value === 'object' && value.toBase58) {
@@ -419,17 +376,12 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 console.log(`  SecretKey type: ${typeof authorityKeypair.secretKey}`);
                 console.log(`  SecretKey is Uint8Array: ${authorityKeypair.secretKey instanceof Uint8Array}`);
 
-                console.log(`🔍 Authority keypair verification:`);
-                console.log(`  Public key: ${authorityKeypair.publicKey.toString()}`);
-                console.log(`  Is Keypair instance: ${authorityKeypair instanceof Keypair}`);
-
-                // Ensure we're using a fresh, properly constructed keypair (FROM OLD WORKING CODE)
+                // Ensure we're using a fresh, properly constructed keypair
                 const freshKeypair = Keypair.fromSecretKey(authorityKeypair.secretKey);
                 console.log(`🔍 Fresh keypair verification:`);
                 console.log(`  Public key matches: ${freshKeypair.publicKey.equals(authorityKeypair.publicKey)}`);
                 console.log(`  Is Keypair instance: ${freshKeypair instanceof Keypair}`);
 
-                // Use the EXACT same pattern as the OLD WORKING CODE
                 result = await anchorProgram.methods
                     .resolveWagerWithReferrals(
                         { [args.winner.toLowerCase()]: {} },
@@ -437,7 +389,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                         args.acceptorReferrerPercentage || 0
                     )
                     .accounts(enhancedAccounts)
-                    .signers([freshKeypair])
+                    .signers([freshKeypair])  // Use the fresh keypair to ensure it's properly constructed
                     .rpc();
                 break;
 
@@ -1477,35 +1429,8 @@ async function executeEnhancedWagerResolution(wager, winnerPosition, wagerType, 
                 throw new Error(`Failed to fetch wager data: ${wagerError?.message || 'Wager not found'}`);
             }
 
-            console.log(`🔍 Database wager data:`, {
-                wager_id: wagerData.wager_id,
-                escrow_pda: wagerData.escrow_pda,
-                escrow_pda_type: typeof wagerData.escrow_pda,
-                escrow_pda_length: wagerData.escrow_pda ? wagerData.escrow_pda.length : 'undefined',
-                creator_address: wagerData.creator_address,
-                acceptor_address: wagerData.acceptor_address
-            });
-
-            // Validate escrow_pda before using it
-            if (!wagerData.escrow_pda || typeof wagerData.escrow_pda !== 'string') {
-                throw new Error(`Invalid escrow_pda: ${wagerData.escrow_pda}`);
-            }
-
-            // Check if escrow_pda looks like a valid Solana public key (base58, 32-44 characters)
-            if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(wagerData.escrow_pda)) {
-                throw new Error(`escrow_pda is not a valid Solana public key format: ${wagerData.escrow_pda}`);
-            }
-
-            let wagerAccount, escrowAccount;
-            try {
-                wagerAccount = new PublicKey(wagerData.escrow_pda);
-                escrowAccount = new PublicKey(wagerData.escrow_pda);
-                console.log(`✅ Successfully created PublicKey objects from database escrow_pda`);
-            } catch (error) {
-                console.error(`❌ Error creating PublicKey from database escrow_pda: "${wagerData.escrow_pda}"`);
-                console.error(`❌ Error details:`, error.message);
-                throw error;
-            }
+            const wagerAccount = new PublicKey(wagerData.escrow_pda);
+            const escrowAccount = new PublicKey(wagerData.escrow_pda);
             const winnerWallet = winnerPosition === 'creator'
                 ? new PublicKey(wagerData.creator_address)
                 : new PublicKey(wagerData.acceptor_address);
@@ -1523,7 +1448,7 @@ async function executeEnhancedWagerResolution(wager, winnerPosition, wagerType, 
             }
 
             // Execute the enhanced resolve_wager_with_referrals instruction with referral data
-            const instructionAccounts = {
+            const transaction = await executeProgramInstruction('resolve_wager_with_referrals', {
                 wagerId: wagerData.wager_id,
                 escrowPda: wagerData.escrow_pda,
                 winnerPubkey: winnerWallet.toString(),
@@ -1531,11 +1456,7 @@ async function executeEnhancedWagerResolution(wager, winnerPosition, wagerType, 
                 treasuryPubkey: TREASURY_WALLET.toString(),
                 creatorReferrerPubkey: creatorReferrer?.address || TREASURY_WALLET.toString(),
                 acceptorReferrerPubkey: acceptorReferrer?.address || TREASURY_WALLET.toString()
-            };
-
-            console.log(`🔍 Instruction accounts being passed:`, instructionAccounts);
-
-            const transaction = await executeProgramInstruction('resolve_wager_with_referrals', instructionAccounts, {
+            }, {
                 winner: winnerPosition,
                 creatorReferrerPercentage: creatorReferrer?.percentage || 0,
                 acceptorReferrerPercentage: acceptorReferrer?.percentage || 0
