@@ -382,6 +382,14 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 console.log(`  Public key matches: ${freshKeypair.publicKey.equals(authorityKeypair.publicKey)}`);
                 console.log(`  Is Keypair instance: ${freshKeypair instanceof Keypair}`);
 
+                // Ensure the authority account in enhancedAccounts matches the signer
+                enhancedAccounts.authority = freshKeypair.publicKey;
+
+                console.log(`🔍 Final account verification before transaction:`);
+                console.log(`  Authority in accounts: ${enhancedAccounts.authority.toString()}`);
+                console.log(`  Signer public key: ${freshKeypair.publicKey.toString()}`);
+                console.log(`  Keys match: ${enhancedAccounts.authority.equals(freshKeypair.publicKey)}`);
+
                 result = await anchorProgram.methods
                     .resolveWagerWithReferrals(
                         { [args.winner.toLowerCase()]: {} },
