@@ -255,7 +255,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 break;
 
             case 'resolve_wager_with_referrals':
-                console.log(`🔍 Using correct PDAs for resolve_wager_with_referrals (derived wager PDA + database escrow)`);
+                console.log(`🔍 Using correct PDAs for resolve_wager_with_referrals (wagerId directly + database escrow)`);
                 console.log(`🔍 Debug - accounts.wagerId: ${accounts.wagerId}`);
                 console.log(`🔍 Debug - accounts.escrowPda: ${accounts.escrowPda}`);
                 console.log(`🔍 Debug - accounts.escrowPda type: ${typeof accounts.escrowPda}`);
@@ -268,11 +268,8 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     const cleanEscrowPda = accounts.escrowPda.trim();
                     console.log(`🔍 Cleaned escrowPda: "${cleanEscrowPda}"`);
 
-                    // Derive wager PDA from wager_id (like working instructions do)
-                    enhancedWagerPDA = PublicKey.findProgramAddressSync(
-                        [Buffer.from("wager"), Buffer.from(accounts.wagerId)],
-                        WAGERFI_PROGRAM_ID
-                    )[0];
+                    // Use the EXACT same approach as working instructions - use wagerId directly
+                    enhancedWagerPDA = new PublicKey(accounts.wagerId);
 
                     // Use escrow address from database for escrow account
                     enhancedEscrowPDA = new PublicKey(cleanEscrowPda);
@@ -283,7 +280,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     throw error;
                 }
 
-                console.log(`🔍 Wager account (derived PDA): ${enhancedWagerPDA.toString()}`);
+                console.log(`🔍 Wager account (using wagerId directly): ${enhancedWagerPDA.toString()}`);
                 console.log(`🔍 Escrow account (from DB): ${enhancedEscrowPDA.toString()}`);
                 console.log(`🔍 Winner: ${accounts.winnerPubkey}`);
                 console.log(`🔍 Treasury: ${accounts.treasuryPubkey}`);
@@ -297,7 +294,6 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 // Validate all addresses before creating PublicKey objects
                 console.log(`🔍 Validating addresses before PublicKey creation:`);
                 console.log(`  Winner: ${accounts.winnerPubkey}`);
-                console.log(`  Creator: ${accounts.creatorPubkey}`);
                 console.log(`  Treasury: ${accounts.treasuryPubkey}`);
                 console.log(`  Creator Referrer: ${accounts.creatorReferrerPubkey || 'None'}`);
                 console.log(`  Acceptor Referrer: ${accounts.acceptorReferrerPubkey || 'None'}`);
@@ -323,7 +319,6 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 try {
                     validateAddress(accounts.escrowPda, 'Escrow');
                     validateAddress(accounts.winnerPubkey, 'Winner');
-                    validateAddress(accounts.creatorPubkey, 'Creator');
                     validateAddress(accounts.treasuryPubkey, 'Treasury');
                     if (accounts.creatorReferrerPubkey) {
                         validateAddress(accounts.creatorReferrerPubkey, 'Creator Referrer');
@@ -341,7 +336,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     wager: enhancedWagerPDA,
                     escrow: enhancedEscrowPDA,
                     winner: new PublicKey(accounts.winnerPubkey),
-                    creator: new PublicKey(accounts.creatorPubkey), // Add creator for rent reclaim
+
                     treasury: new PublicKey(accounts.treasuryPubkey),
 
                     authority: authorityKeypair.publicKey, // Use the original authority keypair to match the provider
