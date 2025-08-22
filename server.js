@@ -5010,7 +5010,7 @@ async function distributePendingRewards() {
             return; // No pending rewards
         }
 
-        console.log(`💸 Distributing ${pendingRewards.length} pending rewards...`);
+        console.log(`💸 PROCESSING ${pendingRewards.length} PENDING REWARDS for treasury tracking...`);
 
         // Track amounts by reward type for treasury snapshot updates
         let randomWinnersTotal = 0;
@@ -5056,7 +5056,7 @@ async function distributePendingRewards() {
         // Check if we should mark the snapshot as fully distributed
         await checkAndMarkSnapshotAsDistributed();
 
-        console.log(`✅ Successfully distributed ${successfulDistributions}/${pendingRewards.length} rewards totaling ${totalDistributed.toFixed(6)} SOL`);
+        console.log(`✅ TREASURY TRACKING: Processed ${successfulDistributions}/${pendingRewards.length} rewards totaling ${totalDistributed.toFixed(6)} SOL`);
 
     } catch (error) {
         console.error('❌ Error in distributePendingRewards:', error);
@@ -5187,6 +5187,29 @@ async function distributeBuybackRewardDirect(reward) {
         if (updateError) {
             console.error('❌ Error updating buyback reward status:', updateError);
             return false;
+        }
+
+        // Update treasury snapshot to track buyback distribution
+        const today = new Date().toISOString().split('T')[0];
+        const { data: todaySnapshot } = await supabase
+            .from('treasury_daily_snapshots')
+            .select('buyback_distributed')
+            .eq('snapshot_date', today)
+            .single();
+
+        if (todaySnapshot) {
+            const currentBuybackDistributed = parseFloat(todaySnapshot.buyback_distributed || 0);
+            const newBuybackDistributed = currentBuybackDistributed + buybackAmount;
+
+            await supabase
+                .from('treasury_daily_snapshots')
+                .update({
+                    buyback_distributed: newBuybackDistributed,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('snapshot_date', today);
+
+            console.log(`📊 Updated treasury snapshot: buyback_distributed = ${newBuybackDistributed} SOL`);
         }
 
         // Delete the scheduled reward since it's completed
@@ -5392,11 +5415,13 @@ async function updateTreasurySnapshot(randomWinnersTotal, milestoneRewardsTotal,
         if (updateError) {
             console.error('❌ Error updating treasury snapshot:', updateError);
         } else {
-            console.log(`📊 Treasury snapshot updated: ${totalDistributed.toFixed(6)} SOL distributed`);
-            console.log(`   Random Winners: ${randomWinnersTotal.toFixed(6)} SOL`);
-            console.log(`   Milestones: ${milestoneRewardsTotal.toFixed(6)} SOL`);
-            console.log(`   Micro-Drops: ${microDropsTotal.toFixed(6)} SOL`);
-            console.log(`   Buyback: ${buybackTotal.toFixed(6)} SOL`);
+            console.log(`📊 TREASURY SNAPSHOT UPDATED for ${today}:`);
+            console.log(`   💰 Total Distributed: ${totalDistributed.toFixed(6)} SOL`);
+            console.log(`   🎯 Random Winners: ${randomWinnersTotal.toFixed(6)} SOL`);
+            console.log(`   🏆 Milestones: ${milestoneRewardsTotal.toFixed(6)} SOL`);
+            console.log(`   💧 Micro-Drops: ${microDropsTotal.toFixed(6)} SOL`);
+            console.log(`   🔄 Buyback: ${buybackTotal.toFixed(6)} SOL`);
+            console.log(`   📈 New reward_budget_used: ${(parseFloat(snapshot.reward_budget_used) + totalDistributed).toFixed(8)} SOL`);
         }
 
     } catch (error) {
@@ -5440,10 +5465,10 @@ setInterval(async () => {
     await processScheduledRewards();
 }, 60000); // Check every minute for scheduled distributions
 
-// Emergency fallback - distribute any remaining pending rewards
+// Distribute pending rewards and update treasury snapshots
 setInterval(async () => {
     await distributePendingRewards();
-}, 30 * 60 * 1000); // Every 30 minutes as backup
+}, 1 * 60 * 1000); // Every 1 minute to ensure timely treasury tracking
 
 // ============================================================================
 // GRADUAL REWARD DISTRIBUTION SYSTEM
@@ -5589,11 +5614,42 @@ async function scheduleMicroDrops(date, rewardBudget) {
         // Sort times chronologically
         scheduledTimes.sort();
 
-        // Schedule micro-drops with random user selection (users can win multiple times)
+        // Fair distribution algorithm - prevent one user from dominating
+        const maxSelectionsPerUser = Math.max(1, Math.floor(100 / eligibleUsers.length) + 2); // Fair base + small bonus
+        const userSelectionCounts = new Map();
+        const availableUsers = [...eligibleUsers];
+
+        console.log(`🎯 Fair distribution: Max ${maxSelectionsPerUser} selections per user`);
+
+        // Schedule micro-drops with fair distribution
         for (let i = 0; i < Math.min(100, scheduledTimes.length); i++) {
-            const randomUser = eligibleUsers[Math.floor(Math.random() * eligibleUsers.length)];
+            // Filter users who haven't reached their max selections
+            const eligibleForSelection = availableUsers.filter(user =>
+                (userSelectionCounts.get(user.user_id) || 0) < maxSelectionsPerUser
+            );
+
+            // If all users reached max, reset and allow another round
+            if (eligibleForSelection.length === 0) {
+                userSelectionCounts.clear();
+                console.log(`🔄 All users reached max selections, resetting for fair distribution`);
+            }
+
+            // Select from available users (use all users if we reset)
+            const usersToPickFrom = eligibleForSelection.length > 0 ? eligibleForSelection : availableUsers;
+            const randomUser = usersToPickFrom[Math.floor(Math.random() * usersToPickFrom.length)];
+
+            // Track selection count
+            userSelectionCounts.set(randomUser.user_id, (userSelectionCounts.get(randomUser.user_id) || 0) + 1);
+
             await scheduleReward(date, scheduledTimes[i], 'micro_drop', microDropReward, 0.0035, randomUser.user_id, randomUser.wallet_address);
         }
+
+        // Log distribution for transparency
+        console.log(`📊 Micro-drop distribution:`);
+        userSelectionCounts.forEach((count, userId) => {
+            const user = eligibleUsers.find(u => u.user_id === userId);
+            console.log(`   ${user?.wallet_address?.substring(0, 8)}...: ${count} selections`);
+        });
 
         console.log(`📋 Scheduled ${Math.min(100, scheduledTimes.length)} micro-drops (24-hour random distribution)`);
 
@@ -5849,55 +5905,6 @@ supabase
             console.log('🧹 Cleaned up any reward distributions with null snapshot_id');
         }
     });
-
-// TEMPORARY: Test REAL buyback system at 13:44 UTC (25% of tomorrow's reward budget)
-setTimeout(async () => {
-    try {
-        const testDate = new Date().toISOString().split('T')[0]; // Today
-
-        // Get tomorrow's snapshot to calculate REAL buyback amount
-        const tomorrow = new Date();
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        const tomorrowDate = tomorrow.toISOString().split('T')[0];
-
-        const { data: tomorrowSnapshot, error: snapshotError } = await supabase
-            .from('treasury_daily_snapshots')
-            .select('reward_budget')
-            .eq('snapshot_date', tomorrowDate)
-            .single();
-
-        if (snapshotError || !tomorrowSnapshot) {
-            console.error('❌ REAL BUYBACK TEST: Could not find tomorrow\'s snapshot:', snapshotError);
-            return;
-        }
-
-        // Calculate REAL production buyback amount (25% of reward budget)
-        const rewardBudget = parseFloat(tomorrowSnapshot.reward_budget);
-        const realBuybackAmount = (rewardBudget * 25) / 100; // 25% of reward budget
-        const testPercentage = 0.25; // 25% as decimal
-        const buybackWallet = 'FPBUsH6tJgRaUu6diyS2AuwvXESrA9MPqJ9cov15boPQ';
-
-        console.log('🧪 REAL BUYBACK TEST: Scheduling production buyback for 13:44 UTC...');
-        console.log(`💰 Tomorrow's reward budget: ${rewardBudget} SOL`);
-        console.log(`💰 Real buyback amount (25%): ${realBuybackAmount} SOL`);
-
-        // Clear any existing test buybacks for today
-        await supabase
-            .from('scheduled_reward_distributions')
-            .delete()
-            .eq('reward_date', testDate)
-            .eq('reward_type', 'wager_buyback');
-
-        // Schedule REAL buyback for 13:44
-        await scheduleReward(testDate, '13:44:00', 'wager_buyback', realBuybackAmount, testPercentage, null, buybackWallet);
-
-        console.log(`✅ REAL BUYBACK TEST: Scheduled ${realBuybackAmount} SOL buyback for 13:44 UTC`);
-        console.log(`📍 Buyback will be sent to: ${buybackWallet}`);
-
-    } catch (error) {
-        console.error('❌ REAL BUYBACK TEST: Error scheduling production buyback:', error);
-    }
-}, 5000); // Run 5 seconds after startup
 
 console.log('🎁 Gradual reward system initialized - Rewards distributed throughout the day');
 
