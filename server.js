@@ -5850,15 +5850,36 @@ supabase
         }
     });
 
-// TEMPORARY: Test buyback at 13:33 UTC
+// TEMPORARY: Test REAL buyback system at 13:44 UTC (25% of tomorrow's reward budget)
 setTimeout(async () => {
     try {
         const testDate = new Date().toISOString().split('T')[0]; // Today
-        const testAmount = 0.1; // Test with 0.1 SOL
+
+        // Get tomorrow's snapshot to calculate REAL buyback amount
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrowDate = tomorrow.toISOString().split('T')[0];
+
+        const { data: tomorrowSnapshot, error: snapshotError } = await supabase
+            .from('treasury_daily_snapshots')
+            .select('reward_budget')
+            .eq('snapshot_date', tomorrowDate)
+            .single();
+
+        if (snapshotError || !tomorrowSnapshot) {
+            console.error('❌ REAL BUYBACK TEST: Could not find tomorrow\'s snapshot:', snapshotError);
+            return;
+        }
+
+        // Calculate REAL production buyback amount (25% of reward budget)
+        const rewardBudget = parseFloat(tomorrowSnapshot.reward_budget);
+        const realBuybackAmount = (rewardBudget * 25) / 100; // 25% of reward budget
         const testPercentage = 0.25; // 25% as decimal
         const buybackWallet = 'FPBUsH6tJgRaUu6diyS2AuwvXESrA9MPqJ9cov15boPQ';
 
-        console.log('🧪 BUYBACK TEST: Scheduling test buyback for 13:40 UTC...');
+        console.log('🧪 REAL BUYBACK TEST: Scheduling production buyback for 13:44 UTC...');
+        console.log(`💰 Tomorrow's reward budget: ${rewardBudget} SOL`);
+        console.log(`💰 Real buyback amount (25%): ${realBuybackAmount} SOL`);
 
         // Clear any existing test buybacks for today
         await supabase
@@ -5867,14 +5888,14 @@ setTimeout(async () => {
             .eq('reward_date', testDate)
             .eq('reward_type', 'wager_buyback');
 
-        // Schedule buyback for 13:40
-        await scheduleReward(testDate, '13:40:00', 'wager_buyback', testAmount, testPercentage, null, buybackWallet);
+        // Schedule REAL buyback for 13:44
+        await scheduleReward(testDate, '13:44:00', 'wager_buyback', realBuybackAmount, testPercentage, null, buybackWallet);
 
-        console.log(`✅ BUYBACK TEST: Scheduled ${testAmount} SOL buyback for 13:40 UTC`);
+        console.log(`✅ REAL BUYBACK TEST: Scheduled ${realBuybackAmount} SOL buyback for 13:44 UTC`);
         console.log(`📍 Buyback will be sent to: ${buybackWallet}`);
 
     } catch (error) {
-        console.error('❌ BUYBACK TEST: Error scheduling test buyback:', error);
+        console.error('❌ REAL BUYBACK TEST: Error scheduling production buyback:', error);
     }
 }, 5000); // Run 5 seconds after startup
 
