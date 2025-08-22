@@ -5334,14 +5334,14 @@ function shuffleArray(array) {
 // REWARD SYSTEM CRON JOBS
 // ============================================================================
 
-// TEMPORARY: Daily calculation at 13:06 UTC for testing NEW snapshot creation logic (change back to 23:59 after test)
+// TEMPORARY: Daily calculation at 13:11 UTC for testing NEW snapshot creation logic (change back to 23:59 after test)
 setInterval(async () => {
     const now = new Date();
-    console.log(`⏰ Current UTC time: ${now.getUTCHours()}:${now.getUTCMinutes().toString().padStart(2, '0')} (checking for 13:06)`);
-    const isTime = now.getUTCHours() === 13 && now.getUTCMinutes() === 6;
+    console.log(`⏰ Current UTC time: ${now.getUTCHours()}:${now.getUTCMinutes().toString().padStart(2, '0')} (checking for 13:11)`);
+    const isTime = now.getUTCHours() === 13 && now.getUTCMinutes() === 11;
 
     if (isTime) {
-        console.log('🧪 13:06 UTC TEST - Starting daily calculation and NEW snapshot creation...');
+        console.log('🧪 13:11 UTC TEST - Starting daily calculation and NEW snapshot creation...');
 
         // CRITICAL: Do these sequentially to avoid race conditions
         await calculateDailyRewards();        // First: Finalize today's snapshot, CREATE tomorrow's snapshot with reward_budget
