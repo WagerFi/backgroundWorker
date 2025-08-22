@@ -800,6 +800,67 @@ app.post('/admin/schedule-todays-rewards', async (req, res) => {
     }
 });
 
+// Check distribution fairness for today's scheduled rewards  
+app.get('/admin/check-distribution/:date?', async (req, res) => {
+    try {
+        const date = req.params.date || new Date().toISOString().split('T')[0];
+
+        // Get micro-drop distribution
+        const { data: microDrops, error: microError } = await supabase
+            .from('scheduled_reward_distributions')
+            .select('user_address, reward_amount, reward_type')
+            .eq('reward_date', date)
+            .eq('reward_type', 'micro_drop');
+
+        if (microError) {
+            return res.status(500).json({ success: false, error: microError.message });
+        }
+
+        // Count selections per user
+        const distribution = {};
+        microDrops.forEach(reward => {
+            const addr = reward.user_address;
+            if (!distribution[addr]) {
+                distribution[addr] = { count: 0, total_rewards: 0 };
+            }
+            distribution[addr].count++;
+            distribution[addr].total_rewards += parseFloat(reward.reward_amount);
+        });
+
+        // Convert to array and sort
+        const results = Object.entries(distribution).map(([address, data]) => ({
+            user_address: address,
+            times_selected: data.count,
+            total_rewards: data.total_rewards.toFixed(8)
+        })).sort((a, b) => b.times_selected - a.times_selected);
+
+        // Get total counts
+        const totalRewards = microDrops.length;
+        const uniqueUsers = results.length;
+        const avgPerUser = uniqueUsers > 0 ? totalRewards / uniqueUsers : 0;
+        const maxSelections = results.length > 0 ? results[0].times_selected : 0;
+        const minSelections = results.length > 0 ? results[results.length - 1].times_selected : 0;
+
+        res.json({
+            success: true,
+            date: date,
+            micro_drop_distribution: results,
+            stats: {
+                total_micro_drops: totalRewards,
+                unique_users: uniqueUsers,
+                average_per_user: avgPerUser.toFixed(1),
+                max_selections: maxSelections,
+                min_selections: minSelections,
+                fairness_range: maxSelections - minSelections
+            }
+        });
+
+    } catch (error) {
+        console.error('❌ Error checking distribution:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 app.post('/admin/distribute-rewards', async (req, res) => {
     try {
         await distributePendingRewards();
@@ -5549,6 +5610,60 @@ async function updateTreasurySnapshot(randomWinnersTotal, milestoneRewardsTotal,
     }
 }
 
+// Update treasury snapshot tracking for a single scheduled reward
+async function updateTreasurySnapshotForScheduledReward(scheduledReward) {
+    try {
+        const today = new Date().toISOString().split('T')[0];
+        const rewardAmount = parseFloat(scheduledReward.reward_amount);
+
+        // Get current snapshot
+        const { data: snapshot, error: fetchError } = await supabase
+            .from('treasury_daily_snapshots')
+            .select('*')
+            .eq('snapshot_date', today)
+            .single();
+
+        if (fetchError || !snapshot) {
+            console.error('❌ Error fetching treasury snapshot for scheduled reward update:', fetchError);
+            return;
+        }
+
+        // Determine which field to update based on reward type
+        let updateData = {
+            reward_budget_used: (parseFloat(snapshot.reward_budget_used || 0) + rewardAmount).toFixed(8),
+            updated_at: new Date().toISOString()
+        };
+
+        if (scheduledReward.reward_type === 'random_winner') {
+            updateData.random_winners_distributed = (parseFloat(snapshot.random_winners_distributed || 0) + rewardAmount).toFixed(8);
+        } else if (scheduledReward.reward_type.startsWith('milestone_')) {
+            updateData.milestone_rewards_distributed = (parseFloat(snapshot.milestone_rewards_distributed || 0) + rewardAmount).toFixed(8);
+        } else if (scheduledReward.reward_type === 'micro_drop') {
+            updateData.micro_drops_distributed = (parseFloat(snapshot.micro_drops_distributed || 0) + rewardAmount).toFixed(8);
+        } else if (scheduledReward.reward_type === 'wager_buyback') {
+            updateData.buyback_distributed = (parseFloat(snapshot.buyback_distributed || 0) + rewardAmount).toFixed(8);
+        }
+
+        // Update the snapshot
+        const { error: updateError } = await supabase
+            .from('treasury_daily_snapshots')
+            .update(updateData)
+            .eq('snapshot_date', today);
+
+        if (updateError) {
+            console.error('❌ Error updating treasury snapshot for scheduled reward:', updateError);
+        } else {
+            console.log(`📊 Treasury snapshot updated for ${scheduledReward.reward_type}: +${rewardAmount.toFixed(6)} SOL`);
+        }
+
+        // Check if snapshot should be marked as fully distributed
+        await checkAndMarkSnapshotAsDistributed();
+
+    } catch (error) {
+        console.error('❌ Error in updateTreasurySnapshotForScheduledReward:', error);
+    }
+}
+
 // Utility function to shuffle array
 function shuffleArray(array) {
     const shuffled = [...array];
@@ -5861,6 +5976,9 @@ async function executeScheduledReward(scheduledReward) {
                     distribution_id: rewardDist.id
                 })
                 .eq('id', scheduledReward.id);
+
+            // Update treasury snapshot tracking for scheduled rewards
+            await updateTreasurySnapshotForScheduledReward(scheduledReward);
 
             console.log(`✅ Scheduled ${scheduledReward.reward_type} reward executed successfully`);
         }
