@@ -292,6 +292,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 // Validate all addresses before creating PublicKey objects
                 console.log(`🔍 Validating addresses before PublicKey creation:`);
                 console.log(`  Winner: ${accounts.winnerPubkey}`);
+                console.log(`  Creator: ${accounts.creatorPubkey}`);
                 console.log(`  Treasury: ${accounts.treasuryPubkey}`);
                 console.log(`  Creator Referrer: ${accounts.creatorReferrerPubkey || 'None'}`);
                 console.log(`  Acceptor Referrer: ${accounts.acceptorReferrerPubkey || 'None'}`);
@@ -317,6 +318,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 try {
                     validateAddress(accounts.escrowPda, 'Escrow');
                     validateAddress(accounts.winnerPubkey, 'Winner');
+                    validateAddress(accounts.creatorPubkey, 'Creator');
                     validateAddress(accounts.treasuryPubkey, 'Treasury');
                     if (accounts.creatorReferrerPubkey) {
                         validateAddress(accounts.creatorReferrerPubkey, 'Creator Referrer');
@@ -334,6 +336,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     wager: enhancedWagerPDA,
                     escrow: enhancedEscrowPDA,
                     winner: new PublicKey(accounts.winnerPubkey),
+                    creator: new PublicKey(accounts.creatorPubkey), // Add creator back - program requires it
 
                     treasury: new PublicKey(accounts.treasuryPubkey),
 
