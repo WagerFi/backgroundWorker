@@ -4113,6 +4113,9 @@ async function updateWagerUserStats(wager, winnerId, winnerPosition, wagerType =
 
         console.log(`✅ Stats updated for both users`);
 
+        // Increment daily wager count and check for milestone rewards
+        await incrementDailyWagerCount();
+
         // Check for milestone rewards (new 10-milestone system: 1st, 10th, 20th, 30th, 40th, 50th, 75th, 100th, 125th, 150th)
         // Each milestone: 1.5% total (0.75% creator + 0.75% acceptor)
         await checkMilestoneRewards(creatorId, acceptorId, wager.wager_id);
@@ -4803,6 +4806,67 @@ app.listen(PORT, () => {
 // REWARD SYSTEM IMPLEMENTATION
 // ============================================================================
 
+// Ensure daily_wager_counts entry exists for a given date - enables automatic daily reset!
+async function ensureDailyWagerCountExists(date) {
+    try {
+        // Try to create entry for this date (will be ignored if already exists due to unique constraint)
+        const { error } = await supabase
+            .from('daily_wager_counts')
+            .insert({
+                wager_date: date,
+                wager_count: 0,
+                // All milestones start as false for new days
+                milestone_1_reached: false,
+                milestone_10_reached: false,
+                milestone_20_reached: false,
+                milestone_30_reached: false,
+                milestone_40_reached: false,
+                milestone_50_reached: false,
+                milestone_75_reached: false,
+                milestone_100_reached: false,
+                milestone_125_reached: false,
+                milestone_150_reached: false
+            });
+
+        // If no error or "already exists" error, we're good
+        if (error && !error.message.includes('duplicate key')) {
+            console.error(`❌ Error ensuring daily wager count exists for ${date}:`, error);
+        } else if (!error) {
+            console.log(`🆕 Created new daily_wager_counts entry for ${date} - Fresh start!`);
+        }
+        // If duplicate key error, entry already exists (which is fine)
+    } catch (error) {
+        console.error(`❌ Error in ensureDailyWagerCountExists for ${date}:`, error);
+    }
+}
+
+// Increment daily wager count for today - called when a wager is accepted
+async function incrementDailyWagerCount() {
+    try {
+        const today = new Date().toISOString().split('T')[0];
+
+        // Ensure today's entry exists first
+        await ensureDailyWagerCountExists(today);
+
+        // Increment the wager count
+        const { error } = await supabase
+            .from('daily_wager_counts')
+            .update({
+                wager_count: supabase.sql`wager_count + 1`,
+                updated_at: new Date().toISOString()
+            })
+            .eq('wager_date', today);
+
+        if (error) {
+            console.error(`❌ Error incrementing daily wager count for ${today}:`, error);
+        } else {
+            console.log(`📈 Daily wager count incremented for ${today}`);
+        }
+    } catch (error) {
+        console.error('❌ Error in incrementDailyWagerCount:', error);
+    }
+}
+
 // Update daily_wager_counts table to mark milestone as reached and store both creator/acceptor user info
 async function updateMilestoneInDailyCount(milestoneCount, creatorId, acceptorId, wagerId, date) {
     try {
@@ -4839,6 +4903,10 @@ async function checkMilestoneRewards(creatorId, acceptorId, wagerId) {
     try {
         // Get today's wager count and milestone status
         const today = new Date().toISOString().split('T')[0];
+
+        // First, ensure today's entry exists - this enables automatic daily reset!
+        await ensureDailyWagerCountExists(today);
+
         const { data: wagerCount, error: countError } = await supabase
             .from('daily_wager_counts')
             .select('*')
@@ -4846,7 +4914,7 @@ async function checkMilestoneRewards(creatorId, acceptorId, wagerId) {
             .single();
 
         if (countError || !wagerCount) {
-            console.error('❌ Error getting daily wager count:', countError);
+            console.error('❌ Error getting daily wager count after ensuring exists:', countError);
             return;
         }
 
