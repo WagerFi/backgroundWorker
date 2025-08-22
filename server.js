@@ -100,11 +100,19 @@ console.log('📋 Loaded WagerFi IDL with instructions:', idl.instructions.map(i
 const anchorProvider = new AnchorProvider(connection, {
     publicKey: authorityKeypair.publicKey,
     signTransaction: async (tx) => {
+        console.log(`🔍 AnchorProvider.wallet.signTransaction called for tx:`, tx.signatures.length, 'signatures');
+        console.log(`  Fee payer: ${tx.feePayer?.toString()}`);
         tx.sign(authorityKeypair);
+        console.log(`  After signing: ${tx.signatures.length} signatures`);
         return tx;
     },
     signAllTransactions: async (txs) => {
-        txs.forEach(tx => tx.sign(authorityKeypair));
+        console.log(`🔍 AnchorProvider.wallet.signAllTransactions called for ${txs.length} transactions`);
+        txs.forEach((tx, i) => {
+            console.log(`  Signing tx ${i}: ${tx.signatures.length} signatures`);
+            tx.sign(authorityKeypair);
+            console.log(`  After signing tx ${i}: ${tx.signatures.length} signatures`);
+        });
         return txs;
     }
 }, { commitment: 'confirmed' });
@@ -112,6 +120,30 @@ const anchorProvider = new AnchorProvider(connection, {
 console.log('🔍 Provider wallet public key:', anchorProvider.wallet.publicKey.toString());
 console.log('🔍 Authority keypair public key:', authorityKeypair.publicKey.toString());
 console.log('🔍 Keys match:', anchorProvider.wallet.publicKey.equals(authorityKeypair.publicKey));
+
+// Test the provider's signing methods
+console.log('🔍 Testing AnchorProvider signing methods...');
+try {
+    const testTx = new Transaction();
+    testTx.add(SystemProgram.transfer({
+        fromPubkey: authorityKeypair.publicKey,
+        toPubkey: authorityKeypair.publicKey,
+        lamports: 0
+    }));
+    testTx.feePayer = authorityKeypair.publicKey;
+    testTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+
+    console.log('  Test transaction created, testing provider.wallet.signTransaction...');
+    const signedTx = await anchorProvider.wallet.signTransaction(testTx);
+    console.log('  ✅ Provider.wallet.signTransaction successful, signatures:', signedTx.signatures.length);
+
+    // Test if the provider can sign the transaction
+    console.log('  Testing provider.wallet.signTransaction...');
+    const providerSignedTx = await anchorProvider.wallet.signTransaction(testTx);
+    console.log('  ✅ Provider.wallet.signTransaction successful, signatures:', providerSignedTx.signatures.length);
+} catch (error) {
+    console.error('  ❌ Provider signing test failed:', error);
+}
 
 const anchorProgram = new Program(idl, WAGERFI_PROGRAM_ID, anchorProvider);
 console.log('🔗 Anchor program initialized successfully');
@@ -390,15 +422,94 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 console.log(`  Fresh keypair public key: ${freshKeypair.publicKey.toString()}`);
                 console.log(`  Keys match: ${enhancedAccounts.authority.equals(freshKeypair.publicKey)}`);
 
-                result = await anchorProgram.methods
-                    .resolveWagerWithReferrals(
-                        { [args.winner.toLowerCase()]: {} },
-                        args.creatorReferrerPercentage || 0,
-                        args.acceptorReferrerPercentage || 0
-                    )
-                    .accounts(enhancedAccounts)
-                    .signers([freshKeypair])  // Use the fresh keypair to ensure it's properly constructed
-                    .rpc();
+                // Add comprehensive transaction debugging
+                console.log(`🔍 Transaction execution debug:`);
+                console.log(`  Using fresh keypair: ${freshKeypair.publicKey.toString()}`);
+                console.log(`  Fresh keypair secretKey length: ${freshKeypair.secretKey.length}`);
+                console.log(`  Fresh keypair secretKey type: ${typeof freshKeypair.secretKey}`);
+
+                // Test transaction signing with fresh keypair
+                try {
+                    const testTx = new Transaction();
+                    testTx.add(SystemProgram.transfer({
+                        fromPubkey: freshKeypair.publicKey,
+                        toPubkey: freshKeypair.publicKey,
+                        lamports: 0
+                    }));
+                    testTx.feePayer = freshKeypair.publicKey;
+                    testTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+
+                    console.log(`  Test transaction created, attempting to sign...`);
+                    testTx.sign(freshKeypair);
+                    console.log(`  ✅ Test transaction signed successfully with fresh keypair`);
+                } catch (testError) {
+                    console.error(`  ❌ Test transaction signing failed:`, testError);
+                }
+
+                // Log the exact method call
+                console.log(`🔍 Calling anchorProgram.methods.resolveWagerWithReferrals with:`);
+                console.log(`  Winner: ${args.winner}`);
+                console.log(`  Creator referrer percentage: ${args.creatorReferrerPercentage || 0}`);
+                console.log(`  Acceptor referrer percentage: ${args.acceptorReferrerPercentage || 0}`);
+                console.log(`  Accounts:`, JSON.stringify(enhancedAccounts, (key, value) => {
+                    if (value && typeof value === 'object' && value.toBase58) {
+                        return value.toBase58();
+                    }
+                    return value;
+                }, 2));
+                console.log(`  Signers: [${freshKeypair.publicKey.toString()}]`);
+
+                // Try manual transaction building first
+                console.log(`🔍 Attempting manual transaction building...`);
+                try {
+                    const manualTx = await anchorProgram.methods
+                        .resolveWagerWithReferrals(
+                            { [args.winner.toLowerCase()]: {} },
+                            args.creatorReferrerPercentage || 0,
+                            args.acceptorReferrerPercentage || 0
+                        )
+                        .accounts(enhancedAccounts)
+                        .transaction();
+
+                    console.log(`  ✅ Manual transaction built successfully`);
+                    console.log(`  Transaction fee payer: ${manualTx.feePayer?.toString()}`);
+                    console.log(`  Transaction instructions: ${manualTx.instructions.length}`);
+                    console.log(`  Transaction signers required: ${manualTx.signatures.length}`);
+
+                    // Set fee payer and recent blockhash
+                    manualTx.feePayer = freshKeypair.publicKey;
+                    manualTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+
+                    console.log(`  Attempting to sign manual transaction...`);
+                    manualTx.sign(freshKeypair);
+                    console.log(`  ✅ Manual transaction signed successfully`);
+                    console.log(`  Final signatures: ${manualTx.signatures.length}`);
+
+                    // Try to send the manual transaction
+                    console.log(`  Attempting to send manual transaction...`);
+                    const manualSignature = await connection.sendTransaction(manualTx, [freshKeypair]);
+                    console.log(`  ✅ Manual transaction sent successfully: ${manualSignature}`);
+
+                    // Wait for confirmation
+                    const confirmation = await connection.confirmTransaction(manualSignature, 'confirmed');
+                    console.log(`  ✅ Manual transaction confirmed:`, confirmation);
+
+                    result = manualSignature;
+
+                } catch (manualError) {
+                    console.error(`  ❌ Manual transaction failed:`, manualError);
+                    console.log(`  Falling back to Anchor RPC method...`);
+
+                    result = await anchorProgram.methods
+                        .resolveWagerWithReferrals(
+                            { [args.winner.toLowerCase()]: {} },
+                            args.creatorReferrerPercentage || 0,
+                            args.acceptorReferrerPercentage || 0
+                        )
+                        .accounts(enhancedAccounts)
+                        .signers([freshKeypair])  // Use the fresh keypair to ensure it's properly constructed
+                        .rpc();
+                }
                 break;
 
             default:
