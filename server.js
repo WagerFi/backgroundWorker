@@ -628,6 +628,58 @@ app.post('/admin/calculate-rewards', async (req, res) => {
     }
 });
 
+// Test the complete 11:59 PM flow
+app.post('/admin/test-daily-flow', async (req, res) => {
+    try {
+        console.log('🧪 Testing complete daily calculation + scheduling flow...');
+
+        // Step 1: Run calculateDailyRewards (what happens at 11:59 PM)
+        console.log('Step 1: Running calculateDailyRewards()...');
+        await calculateDailyRewards();
+
+        // Step 2: Run scheduleNextDayRewards (what happens after at 11:59 PM)
+        console.log('Step 2: Running scheduleNextDayRewards()...');
+        await scheduleNextDayRewards();
+
+        // Step 3: Check if snapshot exists and has reward_budget
+        const today = new Date().toISOString().split('T')[0];
+        const { data: snapshot, error } = await supabase
+            .from('treasury_daily_snapshots')
+            .select('*')
+            .eq('snapshot_date', today)
+            .single();
+
+        if (error || !snapshot) {
+            throw new Error(`Snapshot test failed: ${error?.message || 'No snapshot found'}`);
+        }
+
+        // Step 4: Check if tomorrow's rewards are scheduled
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const tomorrowDate = tomorrow.toISOString().split('T')[0];
+
+        const { count: scheduledCount } = await supabase
+            .from('scheduled_reward_distributions')
+            .select('*', { count: 'exact', head: true })
+            .eq('reward_date', tomorrowDate);
+
+        res.json({
+            success: true,
+            message: 'Daily flow test completed successfully',
+            snapshot: {
+                date: snapshot.snapshot_date,
+                reward_budget: snapshot.reward_budget,
+                is_calculated: snapshot.is_calculated
+            },
+            scheduled_rewards_count: scheduledCount,
+            next_buyback_scheduled: scheduledCount > 0 ? 'Yes' : 'No'
+        });
+
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 app.post('/admin/distribute-rewards', async (req, res) => {
     try {
         await distributePendingRewards();
@@ -5240,14 +5292,19 @@ function shuffleArray(array) {
 // REWARD SYSTEM CRON JOBS
 // ============================================================================
 
-// Daily calculation at 11:59 PM
+// TEMPORARY: Daily calculation at 1:07 PM for testing (change back to 23:59 after test)
 setInterval(async () => {
     const now = new Date();
-    const isTime = now.getHours() === 23 && now.getMinutes() === 59;
+    const isTime = now.getHours() === 13 && now.getMinutes() === 7;
 
     if (isTime) {
-        await calculateDailyRewards();
-        await scheduleNextDayRewards(); // Schedule tomorrow's gradual distribution
+        console.log('🧪 1:07 PM TEST - Starting daily calculation and scheduling...');
+
+        // CRITICAL: Do these sequentially to avoid race conditions
+        await calculateDailyRewards();        // First: Create today's snapshot with reward_budget
+        await scheduleNextDayRewards();       // Then: Schedule tomorrow's rewards using today's snapshot
+
+        console.log('✅ TEST: Daily calculation and next-day scheduling completed');
     }
 }, 60000); // Check every minute
 
@@ -5282,10 +5339,18 @@ async function scheduleNextDayRewards() {
             .eq('snapshot_date', today)
             .single();
 
-        if (snapshotError || !snapshot || snapshot.reward_budget <= 0) {
-            console.log('⚠️ No reward budget available for tomorrow');
+        if (snapshotError || !snapshot) {
+            console.error(`❌ Could not find today's snapshot for reward scheduling:`, snapshotError);
+            console.error(`   This means calculateDailyRewards() may have failed or not run yet`);
             return;
         }
+
+        if (snapshot.reward_budget <= 0) {
+            console.log('⚠️ No reward budget available for tomorrow (reward_budget: 0)');
+            return;
+        }
+
+        console.log(`✅ Found today's snapshot with reward budget: ${snapshot.reward_budget} SOL`);
 
         const rewardBudget = parseFloat(snapshot.reward_budget);
         console.log(`💰 Tomorrow's reward budget: ${rewardBudget} SOL`);
@@ -5523,7 +5588,7 @@ async function getTodaySnapshotId() {
 
     // Get actual treasury balance
     const treasuryBalance = await getTreasuryBalance();
-    const rewardBudget = treasuryBalance * 0.20; // 20% of treasury balance
+    const rewardBudget = 0; // Will be calculated by daily reward calculation process
 
     const { data: newSnapshot, error: createError } = await supabase
         .from('treasury_daily_snapshots')
@@ -5591,11 +5656,12 @@ async function createTodaysSnapshot() {
         const previousBalance = previousSnapshot?.treasury_balance_end || 0;
         const dailyEarnings = treasuryBalance - previousBalance;
 
-        // Calculate reward budget as 20% of treasury balance
-        const rewardBudget = treasuryBalance * 0.20;
+        // Don't calculate reward_budget here - let your daily calculation handle it
+        // Your system uses previous day's earnings through calculate_daily_reward_budget RPC
+        const rewardBudget = 0; // Will be set by calculateDailyRewards() at 11:59 PM
 
         console.log(`📈 Daily earnings: ${dailyEarnings} SOL`);
-        console.log(`🎁 Reward budget (20%): ${rewardBudget} SOL`);
+        console.log(`🎁 Reward budget: Will be calculated by daily process using previous day's earnings`);
 
         // Create snapshot with correct schema
         const { data: newSnapshot, error: createError } = await supabase
@@ -5627,7 +5693,7 @@ async function createTodaysSnapshot() {
         console.log(`✅ Created today's snapshot: ID ${newSnapshot.id} for ${today}`);
         console.log(`   Treasury Balance Start: ${treasuryBalance} SOL`);
         console.log(`   Daily Earnings: ${dailyEarnings} SOL`);
-        console.log(`   Reward Budget: ${rewardBudget} SOL`);
+        console.log(`   Reward Budget: Will be calculated at 11:59 PM using previous day's earnings`);
 
         return newSnapshot.id;
     } catch (error) {
