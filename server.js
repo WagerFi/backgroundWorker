@@ -423,15 +423,41 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 console.log(`  Public key: ${authorityKeypair.publicKey.toString()}`);
                 console.log(`  Is Keypair instance: ${authorityKeypair instanceof Keypair}`);
 
-                // Try using the provider's wallet instead of explicit signers
-                result = await anchorProgram.methods
+                // Try building the transaction manually
+                console.log('🔧 Building transaction manually...');
+
+                const instruction = await anchorProgram.methods
                     .resolveWagerWithReferrals(
                         { [args.winner.toLowerCase()]: {} },
                         args.creatorReferrerPercentage || 0,
                         args.acceptorReferrerPercentage || 0
                     )
                     .accounts(enhancedAccounts)
-                    .rpc();
+                    .instruction();
+
+                const tx = new Transaction();
+                tx.add(instruction);
+
+                // Set transaction properties
+                const { blockhash } = await connection.getLatestBlockhash();
+                tx.recentBlockhash = blockhash;
+                tx.feePayer = authorityKeypair.publicKey;
+
+                console.log('🔧 Transaction built, signing manually...');
+                console.log('🔍 Transaction signers before signing:', tx.signatures.map(s => s.publicKey.toString()));
+
+                // Sign manually
+                tx.sign(authorityKeypair);
+
+                console.log('🔍 Transaction signers after signing:', tx.signatures.map(s => ({
+                    pubkey: s.publicKey.toString(),
+                    signature: s.signature ? 'PRESENT' : 'MISSING'
+                })));
+
+                // Send manually
+                console.log('🔧 Sending transaction manually...');
+                result = await connection.sendAndConfirm(tx, [authorityKeypair]);
+                console.log('✅ Manual transaction successful:', result);
                 break;
 
             default:
