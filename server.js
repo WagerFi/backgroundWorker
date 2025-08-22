@@ -1189,8 +1189,7 @@ async function resolveWagerWithReferrals(wager, winnerPosition, wagerType) {
         }
 
         // 5. Update user stats
-        const winnerId = winnerPosition === 'creator' ? wager.creator_id : wager.acceptor_id;
-        await updateWagerUserStats(wager, winnerId, winnerPosition, wagerType);
+        await updateWagerUserStats(wager, winnerPosition, wagerType);
 
         console.log(`✅ Wager resolved with atomic referral payouts: ${wager.wager_id}`);
 
