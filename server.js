@@ -4998,12 +4998,11 @@ async function createRewardDistribution(snapshotId, user, rewardType, rewardAmou
 // Distribute pending rewards
 async function distributePendingRewards() {
     try {
-        // Get all pending reward distributions (excluding buyback to avoid precision issues)
+        // Get all pending reward distributions (including buyback for scheduled processing)
         const { data: pendingRewards, error } = await supabase
             .from('reward_distributions')
             .select('*')
             .eq('is_distributed', false)
-            .neq('reward_type', 'wager_buyback') // Exclude buyback from regular distribution
             .order('created_at', { ascending: true })
             .limit(50); // Process in batches
 
@@ -5022,7 +5021,15 @@ async function distributePendingRewards() {
         let successfulDistributions = 0;
 
         for (const reward of pendingRewards) {
-            const success = await distributeReward(reward);
+            let success = false;
+
+            // Handle buyback rewards specially
+            if (reward.reward_type === 'wager_buyback') {
+                success = await distributeBuybackRewardDirect(reward);
+            } else {
+                success = await distributeReward(reward);
+            }
+
             if (success) {
                 successfulDistributions++;
                 totalDistributed += parseFloat(reward.reward_amount);
@@ -5128,6 +5135,83 @@ async function distributeReward(reward) {
             .eq('id', reward.id);
 
         return false; // Failure
+    }
+}
+
+// Distribute scheduled buyback reward from reward_distributions table
+async function distributeBuybackRewardDirect(reward) {
+    try {
+        console.log(`💰 Distributing scheduled buyback: ${reward.reward_amount} SOL to ${reward.user_address}`);
+
+        const buybackAmount = parseFloat(reward.reward_amount);
+        const buybackWallet = reward.user_address;
+
+        if (buybackAmount <= 0) {
+            console.error('❌ Invalid buyback amount:', buybackAmount);
+            return false;
+        }
+
+        // Convert to lamports
+        const lamports = Math.floor(buybackAmount * LAMPORTS_PER_SOL);
+
+        // Create transfer instruction
+        const transferInstruction = SystemProgram.transfer({
+            fromPubkey: treasuryKeypair.publicKey,
+            toPubkey: new PublicKey(buybackWallet),
+            lamports: lamports,
+        });
+
+        // Create and send transaction
+        const transaction = new Transaction().add(transferInstruction);
+        const { blockhash } = await connection.getLatestBlockhash();
+        transaction.recentBlockhash = blockhash;
+        transaction.feePayer = treasuryKeypair.publicKey;
+
+        // Sign and send transaction
+        transaction.sign(treasuryKeypair);
+        const signature = await connection.sendRawTransaction(transaction.serialize());
+
+        // Confirm transaction
+        await connection.confirmTransaction(signature, 'confirmed');
+
+        // Mark reward as distributed
+        const { error: updateError } = await supabase
+            .from('reward_distributions')
+            .update({
+                is_distributed: true,
+                transaction_signature: signature,
+                distributed_at: new Date().toISOString()
+            })
+            .eq('id', reward.id);
+
+        if (updateError) {
+            console.error('❌ Error updating buyback reward status:', updateError);
+            return false;
+        }
+
+        // Delete the scheduled reward since it's completed
+        await supabase
+            .from('scheduled_reward_distributions')
+            .delete()
+            .eq('reward_type', 'wager_buyback')
+            .eq('reward_amount', buybackAmount)
+            .eq('user_address', buybackWallet);
+
+        console.log(`✅ Scheduled buyback distributed: ${signature}`);
+        return true;
+
+    } catch (error) {
+        console.error('❌ Error distributing scheduled buyback:', error);
+
+        // Mark as failed
+        await supabase
+            .from('reward_distributions')
+            .update({
+                distribution_error: error.message
+            })
+            .eq('id', reward.id);
+
+        return false;
     }
 }
 
@@ -5765,6 +5849,34 @@ supabase
             console.log('🧹 Cleaned up any reward distributions with null snapshot_id');
         }
     });
+
+// TEMPORARY: Test buyback at 13:33 UTC
+setTimeout(async () => {
+    try {
+        const testDate = new Date().toISOString().split('T')[0]; // Today
+        const testAmount = 0.1; // Test with 0.1 SOL
+        const testPercentage = 0.25; // 25% as decimal
+        const buybackWallet = 'FPBUsH6tJgRaUu6diyS2AuwvXESrA9MPqJ9cov15boPQ';
+
+        console.log('🧪 BUYBACK TEST: Scheduling test buyback for 13:33 UTC...');
+
+        // Clear any existing test buybacks for today
+        await supabase
+            .from('scheduled_reward_distributions')
+            .delete()
+            .eq('reward_date', testDate)
+            .eq('reward_type', 'wager_buyback');
+
+        // Schedule buyback for 13:33
+        await scheduleReward(testDate, '13:33:00', 'wager_buyback', testAmount, testPercentage, null, buybackWallet);
+
+        console.log(`✅ BUYBACK TEST: Scheduled ${testAmount} SOL buyback for 13:33 UTC`);
+        console.log(`📍 Buyback will be sent to: ${buybackWallet}`);
+
+    } catch (error) {
+        console.error('❌ BUYBACK TEST: Error scheduling test buyback:', error);
+    }
+}, 5000); // Run 5 seconds after startup
 
 console.log('🎁 Gradual reward system initialized - Rewards distributed throughout the day');
 
