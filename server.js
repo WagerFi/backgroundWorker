@@ -4785,58 +4785,100 @@ async function calculateDailyRewards() {
         console.log('🏦 Starting daily treasury calculation...');
 
         const today = new Date().toISOString().split('T')[0];
-        const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+        const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-        // Get current treasury balance
+        // Get current treasury balance from Solana
         const currentBalance = await getTreasuryBalance();
         console.log(`💰 Current treasury balance: ${currentBalance} SOL`);
 
-        // Get yesterday's snapshot to calculate earnings
-        const { data: yesterdaySnapshot, error: yesterdayError } = await supabase
+        // STEP 1: FINALIZE today's snapshot
+        const { data: todaySnapshot, error: todayError } = await supabase
             .from('treasury_daily_snapshots')
             .select('*')
-            .eq('snapshot_date', yesterday)
+            .eq('snapshot_date', today)
             .single();
 
-        const startBalance = yesterdaySnapshot?.treasury_balance_end || 0;
-        const dailyEarnings = Math.max(0, currentBalance - startBalance);
-
-        console.log(`📊 Daily earnings: ${dailyEarnings} SOL`);
-
-        // Calculate reward budget (20% of yesterday's earnings)
-        const { data: rewardBudgetResult, error: budgetError } = await supabase.rpc('calculate_daily_reward_budget', {
-            target_date: today
-        });
-
-        const rewardBudget = budgetError ? 0 : (rewardBudgetResult || 0);
-
-        console.log(`🎁 Reward budget for today: ${rewardBudget} SOL`);
-
-        // Create or update today's snapshot
-        const { error: snapshotError } = await supabase
-            .from('treasury_daily_snapshots')
-            .upsert({
-                snapshot_date: today,
-                treasury_balance_start: startBalance,
-                treasury_balance_end: currentBalance,
-                daily_earnings: dailyEarnings,
-                reward_budget: rewardBudget,
-                is_calculated: true
-            }, {
-                onConflict: 'snapshot_date'
-            });
-
-        if (snapshotError) {
-            console.error('❌ Error creating treasury snapshot:', snapshotError);
+        if (todayError || !todaySnapshot) {
+            console.error(`❌ Could not find today's snapshot to finalize:`, todayError);
             return;
         }
 
-        console.log('✅ Daily treasury calculation completed');
+        const startBalance = todaySnapshot.treasury_balance_start || 0;
+        const todayEarnings = Math.max(0, currentBalance - startBalance);
 
-        // Schedule random winners and micro-drops for the day
-        if (rewardBudget > 0) {
-            await scheduleRandomRewards(today, rewardBudget);
+        console.log(`📊 Today's earnings: ${todayEarnings} SOL (${currentBalance} - ${startBalance})`);
+
+        // Finalize today's snapshot with actual earnings
+        const { error: finalizeError } = await supabase
+            .from('treasury_daily_snapshots')
+            .update({
+                treasury_balance_end: currentBalance,
+                daily_earnings: todayEarnings,
+                is_calculated: true
+            })
+            .eq('snapshot_date', today);
+
+        if (finalizeError) {
+            console.error(`❌ Error finalizing today's snapshot:`, finalizeError);
+            return;
         }
+
+        console.log(`✅ Finalized today's snapshot (${today}) with ${todayEarnings} SOL earnings`);
+
+        // STEP 2: CREATE tomorrow's snapshot with reward budget
+        const tomorrowRewardBudget = todayEarnings * 0.20; // 20% of TODAY's earnings
+
+        console.log(`🎁 Tomorrow's reward budget: ${tomorrowRewardBudget} SOL (20% of today's ${todayEarnings} SOL)`);
+
+        // Check if tomorrow's snapshot already exists
+        const { data: existingTomorrow } = await supabase
+            .from('treasury_daily_snapshots')
+            .select('id')
+            .eq('snapshot_date', tomorrow)
+            .single();
+
+        if (existingTomorrow) {
+            console.log(`⚠️ Tomorrow's snapshot already exists, updating reward budget only`);
+            const { error: updateError } = await supabase
+                .from('treasury_daily_snapshots')
+                .update({
+                    reward_budget: tomorrowRewardBudget
+                })
+                .eq('snapshot_date', tomorrow);
+
+            if (updateError) {
+                console.error(`❌ Error updating tomorrow's reward budget:`, updateError);
+            }
+        } else {
+            // Create new snapshot for tomorrow
+            const { error: createError } = await supabase
+                .from('treasury_daily_snapshots')
+                .insert({
+                    snapshot_date: tomorrow,
+                    treasury_balance_start: currentBalance,     // Today's ending = tomorrow's starting
+                    treasury_balance_end: currentBalance,       // Will be updated tomorrow night
+                    daily_earnings: 0,                          // Will be calculated tomorrow night
+                    reward_budget: tomorrowRewardBudget,        // Based on today's earnings
+                    reward_budget_used: 0,
+                    random_winners_distributed: 0,
+                    milestone_rewards_distributed: 0,
+                    micro_drops_distributed: 0,
+                    wager_buyback_amount: 0,
+                    buyback_amount: 0,
+                    buyback_distributed: 0,
+                    is_calculated: false,                       // Tomorrow not finished yet
+                    is_distributed: false
+                });
+
+            if (createError) {
+                console.error(`❌ Error creating tomorrow's snapshot:`, createError);
+                return;
+            }
+
+            console.log(`✅ Created tomorrow's snapshot (${tomorrow}) with ${tomorrowRewardBudget} SOL reward budget`);
+        }
+
+        console.log('✅ Daily treasury calculation completed');
 
     } catch (error) {
         console.error('❌ Error in calculateDailyRewards:', error);
@@ -5292,20 +5334,20 @@ function shuffleArray(array) {
 // REWARD SYSTEM CRON JOBS
 // ============================================================================
 
-// TEMPORARY: Daily calculation at 12:21 UTC for testing (change back to 23:59 after test)
+// TEMPORARY: Daily calculation at 13:06 UTC for testing NEW snapshot creation logic (change back to 23:59 after test)
 setInterval(async () => {
     const now = new Date();
-    console.log(`⏰ Current UTC time: ${now.getUTCHours()}:${now.getUTCMinutes().toString().padStart(2, '0')} (checking for 12:21)`);
-    const isTime = now.getUTCHours() === 12 && now.getUTCMinutes() === 21;
+    console.log(`⏰ Current UTC time: ${now.getUTCHours()}:${now.getUTCMinutes().toString().padStart(2, '0')} (checking for 13:06)`);
+    const isTime = now.getUTCHours() === 13 && now.getUTCMinutes() === 6;
 
     if (isTime) {
-        console.log('🧪 12:21 UTC TEST - Starting daily calculation and scheduling...');
+        console.log('🧪 13:06 UTC TEST - Starting daily calculation and NEW snapshot creation...');
 
         // CRITICAL: Do these sequentially to avoid race conditions
-        await calculateDailyRewards();        // First: Create today's snapshot with reward_budget
-        await scheduleNextDayRewards();       // Then: Schedule tomorrow's rewards using today's snapshot
+        await calculateDailyRewards();        // First: Finalize today's snapshot, CREATE tomorrow's snapshot with reward_budget
+        await scheduleNextDayRewards();       // Then: Schedule tomorrow's rewards using tomorrow's snapshot
 
-        console.log('✅ TEST: Daily calculation and next-day scheduling completed');
+        console.log('✅ TEST: Daily finalization and next-day snapshot creation completed');
     }
 }, 60000); // Check every minute
 
@@ -5332,16 +5374,15 @@ async function scheduleNextDayRewards() {
         tomorrow.setDate(tomorrow.getDate() + 1);
         const tomorrowDate = tomorrow.toISOString().split('T')[0];
 
-        // Get today's snapshot for reward budget
-        const today = new Date().toISOString().split('T')[0];
+        // Get tomorrow's snapshot for reward budget (created by calculateDailyRewards)
         const { data: snapshot, error: snapshotError } = await supabase
             .from('treasury_daily_snapshots')
             .select('reward_budget')
-            .eq('snapshot_date', today)
+            .eq('snapshot_date', tomorrowDate)
             .single();
 
         if (snapshotError || !snapshot) {
-            console.error(`❌ Could not find today's snapshot for reward scheduling:`, snapshotError);
+            console.error(`❌ Could not find tomorrow's snapshot for reward scheduling:`, snapshotError);
             console.error(`   This means calculateDailyRewards() may have failed or not run yet`);
             return;
         }
@@ -5351,7 +5392,7 @@ async function scheduleNextDayRewards() {
             return;
         }
 
-        console.log(`✅ Found today's snapshot with reward budget: ${snapshot.reward_budget} SOL`);
+        console.log(`✅ Found tomorrow's snapshot with reward budget: ${snapshot.reward_budget} SOL`);
 
         const rewardBudget = parseFloat(snapshot.reward_budget);
         console.log(`💰 Tomorrow's reward budget: ${rewardBudget} SOL`);
