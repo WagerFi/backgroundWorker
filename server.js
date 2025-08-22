@@ -5100,17 +5100,29 @@ async function scheduleRandomRewards(date, rewardBudget, snapshotId = null) {
 
         console.log(`👥 Found ${eligibleUsers.length} eligible users for rewards`);
 
-        // Schedule immediate rewards for testing
+        // Schedule immediate rewards for testing - always 10 winners
         const randomWinnerReward = (rewardBudget * 25) / (100 * 10); // 25% ÷ 10 winners = 2.5% each
-        const selectedWinners = shuffleArray([...eligibleUsers]).slice(0, Math.min(10, eligibleUsers.length));
+
+        // Always schedule exactly 10 winners (allow duplicates if fewer eligible users)
+        const selectedWinners = [];
+        for (let i = 0; i < 10; i++) {
+            const randomIndex = Math.floor(Math.random() * eligibleUsers.length);
+            selectedWinners.push(eligibleUsers[randomIndex]);
+        }
 
         for (const user of selectedWinners) {
             await createRewardDistribution(snapshot.id, user, 'random_winner', randomWinnerReward, 0.025);
         }
 
-        // Micro-drops for testing (limited to available users)
+        // Micro-drops for testing - always 100 drops
         const microDropReward = (rewardBudget * 35) / (100 * 100); // 35% ÷ 100 drops = 0.35% each
-        const microDropUsers = shuffleArray([...eligibleUsers]).slice(0, Math.min(100, eligibleUsers.length));
+
+        // Always schedule exactly 100 micro-drops (allow duplicates if fewer eligible users)
+        const microDropUsers = [];
+        for (let i = 0; i < 100; i++) {
+            const randomIndex = Math.floor(Math.random() * eligibleUsers.length);
+            microDropUsers.push(eligibleUsers[randomIndex]);
+        }
 
         for (const user of microDropUsers) {
             await createRewardDistribution(snapshot.id, user, 'micro_drop', microDropReward, 0.0035);
@@ -5134,7 +5146,7 @@ async function scheduleRandomRewards(date, rewardBudget, snapshotId = null) {
             console.log(`✅ Buyback amount stored: ${buybackAmount.toFixed(6)} SOL (will be distributed separately)`);
         }
 
-        console.log(`✅ Scheduled ${selectedWinners.length} random winners, ${microDropUsers.length} micro-drops, and buyback (${buybackAmount.toFixed(6)} SOL) for immediate testing`);
+        console.log(`✅ Scheduled 10 random winners, 100 micro-drops, and buyback (${buybackAmount.toFixed(6)} SOL) for immediate testing`);
 
     } catch (error) {
         console.error('❌ Error in scheduleRandomRewards:', error);
@@ -5775,10 +5787,16 @@ async function scheduleRandomWinners(date, rewardBudget) {
         }
 
         const randomWinnerReward = (rewardBudget * 25) / (100 * 10); // 25% ÷ 10 winners
-        const selectedWinners = shuffleArray([...eligibleUsers]).slice(0, 10);
+
+        // Always schedule exactly 10 winners (allow same user to win multiple times if needed)
+        const selectedWinners = [];
+        for (let i = 0; i < 10; i++) {
+            const randomIndex = Math.floor(Math.random() * eligibleUsers.length);
+            selectedWinners.push(eligibleUsers[randomIndex]);
+        }
 
         // Schedule 1 winner per hour from 8 AM to 6 PM (10 hours total)
-        for (let i = 0; i < selectedWinners.length; i++) {
+        for (let i = 0; i < 10; i++) {
             const hour = 8 + i; // 8 AM to 5 PM (10 hours)
             const minute = Math.floor(Math.random() * 60); // Random minute
             const scheduledTime = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`;
@@ -5786,7 +5804,7 @@ async function scheduleRandomWinners(date, rewardBudget) {
             await scheduleReward(date, scheduledTime, 'random_winner', randomWinnerReward, 0.025, selectedWinners[i].user_id, selectedWinners[i].wallet_address);
         }
 
-        console.log(`📋 Scheduled ${selectedWinners.length} random winners (8 AM - 6 PM)`);
+        console.log(`📋 Scheduled 10 random winners (8 AM - 6 PM) - ${eligibleUsers.length} eligible users`);
 
     } catch (error) {
         console.error('❌ Error in scheduleRandomWinners:', error);
