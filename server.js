@@ -409,8 +409,8 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 console.log(`  Provider authority: ${authorityKeypair.publicKey.toString()}`);
                 console.log(`  Keys match: ${enhancedAccounts.authority.equals(authorityKeypair.publicKey)}`);
 
-                // CRITICAL FIX: Use the same keypair object that the provider was configured with
-                // Don't use .signers() at all - let the provider handle signing automatically
+                // FINAL FIX: Force explicit signing with the EXACT same keypair used in provider
+                // The provider wallet interface isn't working, so we need explicit signers
                 result = await anchorProgram.methods
                     .resolveWagerWithReferrals(
                         { [args.winner.toLowerCase()]: {} },
@@ -418,6 +418,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                         args.acceptorReferrerPercentage || 0
                     )
                     .accounts(enhancedAccounts)
+                    .signers([authorityKeypair])  // Use the EXACT same object as the provider
                     .rpc();
                 break;
 
