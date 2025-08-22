@@ -151,7 +151,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                         treasury: TREASURY_WALLET,
                         authority: authorityKeypair.publicKey,
                     })
-                    .signers([authorityKeypair, treasuryKeypair])  // Both authority and treasury as signers
+                    .signers([authorityKeypair])
                     .rpc();
                 break;
 
@@ -382,16 +382,32 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 console.log(`  Public key matches: ${freshKeypair.publicKey.equals(authorityKeypair.publicKey)}`);
                 console.log(`  Is Keypair instance: ${freshKeypair instanceof Keypair}`);
 
+                // CRITICAL FIX: Verify hardcoded addresses match
+                const HARDCODED_AUTHORITY = "EDGbQWa5tM4u9LxHrg2wMCokK6XnmLop7JThLwurbdXm";
+                const HARDCODED_TREASURY = "GPLMWDSiwmhqDYYDgs12XBAcRtAJRGPufm268xKqWFgi";
+
+                console.log(`🔍 Address verification:`);
+                console.log(`  Required Authority: ${HARDCODED_AUTHORITY}`);
+                console.log(`  Provided Authority: ${freshKeypair.publicKey.toString()}`);
+                console.log(`  Required Treasury: ${HARDCODED_TREASURY}`);
+                console.log(`  Provided Treasury: ${TREASURY_WALLET.toString()}`);
+
+                // Check if addresses match hardcoded constraints
+                if (freshKeypair.publicKey.toString() !== HARDCODED_AUTHORITY) {
+                    throw new Error(`Authority mismatch! Program expects: ${HARDCODED_AUTHORITY}, but got: ${freshKeypair.publicKey.toString()}`);
+                }
+
+                if (TREASURY_WALLET.toString() !== HARDCODED_TREASURY) {
+                    throw new Error(`Treasury mismatch! Program expects: ${HARDCODED_TREASURY}, but got: ${TREASURY_WALLET.toString()}`);
+                }
+
                 // Ensure the authority account in enhancedAccounts matches the signer
                 enhancedAccounts.authority = freshKeypair.publicKey;
 
                 console.log(`🔍 Final account verification before transaction:`);
                 console.log(`  Authority in accounts: ${enhancedAccounts.authority.toString()}`);
-                console.log(`  Authority signer: ${freshKeypair.publicKey.toString()}`);
-                console.log(`  Treasury in accounts: ${enhancedAccounts.treasury.toString()}`);
-                console.log(`  Treasury signer: ${treasuryKeypair.publicKey.toString()}`);
-                console.log(`  Authority keys match: ${enhancedAccounts.authority.equals(freshKeypair.publicKey)}`);
-                console.log(`  Treasury keys match: ${enhancedAccounts.treasury.equals(treasuryKeypair.publicKey)}`);
+                console.log(`  Signer public key: ${freshKeypair.publicKey.toString()}`);
+                console.log(`  Keys match: ${enhancedAccounts.authority.equals(freshKeypair.publicKey)}`);
 
                 result = await anchorProgram.methods
                     .resolveWagerWithReferrals(
@@ -400,7 +416,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                         args.acceptorReferrerPercentage || 0
                     )
                     .accounts(enhancedAccounts)
-                    .signers([freshKeypair, treasuryKeypair])  // Both authority and treasury as signers
+                    .signers([freshKeypair])  // Use the fresh keypair to ensure it's properly constructed
                     .rpc();
                 break;
 
