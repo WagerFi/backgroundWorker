@@ -5520,12 +5520,28 @@ async function getTodaySnapshotId() {
 
     // Create snapshot if it doesn't exist
     console.log(`📅 Creating missing snapshot for ${today}`);
+
+    // Get actual treasury balance
+    const treasuryBalance = await getTreasuryBalance();
+    const rewardBudget = treasuryBalance * 0.20; // 20% of treasury balance
+
     const { data: newSnapshot, error: createError } = await supabase
         .from('treasury_daily_snapshots')
         .insert({
             snapshot_date: today,
-            treasury_balance: 0, // Will be updated by daily calculation
-            reward_budget: 0
+            treasury_balance_start: treasuryBalance,
+            treasury_balance_end: treasuryBalance,
+            daily_earnings: 0, // Unknown for missing snapshots
+            reward_budget: rewardBudget,
+            reward_budget_used: 0,
+            random_winners_distributed: 0,
+            milestone_rewards_distributed: 0,
+            micro_drops_distributed: 0,
+            wager_buyback_amount: 0,
+            buyback_amount: 0,
+            buyback_distributed: 0,
+            is_calculated: true,
+            is_distributed: false
         })
         .select('id')
         .single();
@@ -5555,17 +5571,50 @@ async function createTodaysSnapshot() {
             return existingSnapshot.id;
         }
 
-        // Get treasury balance (rough estimate)
-        const treasuryBalance = 100.0; // You can update this with actual balance
-        const rewardBudget = treasuryBalance * 0.02; // 2% daily reward budget
+        console.log(`📊 Fetching real treasury wallet balance...`);
 
-        // Create the snapshot with only the absolute minimum columns that should exist
+        // Get actual treasury wallet balance from Solana
+        const treasuryBalance = await getTreasuryBalance();
+        console.log(`💰 Current treasury balance: ${treasuryBalance} SOL`);
+
+        // Get previous day's ending balance to calculate daily earnings
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        const yesterdayDate = yesterday.toISOString().split('T')[0];
+
+        const { data: previousSnapshot } = await supabase
+            .from('treasury_daily_snapshots')
+            .select('treasury_balance_end')
+            .eq('snapshot_date', yesterdayDate)
+            .single();
+
+        const previousBalance = previousSnapshot?.treasury_balance_end || 0;
+        const dailyEarnings = treasuryBalance - previousBalance;
+
+        // Calculate reward budget as 20% of treasury balance
+        const rewardBudget = treasuryBalance * 0.20;
+
+        console.log(`📈 Daily earnings: ${dailyEarnings} SOL`);
+        console.log(`🎁 Reward budget (20%): ${rewardBudget} SOL`);
+
+        // Create snapshot with correct schema
         const { data: newSnapshot, error: createError } = await supabase
             .from('treasury_daily_snapshots')
             .insert({
                 snapshot_date: today,
-                treasury_balance: treasuryBalance,
-                reward_budget: rewardBudget
+                treasury_balance_start: treasuryBalance,
+                treasury_balance_end: treasuryBalance, // Same for now, will be updated at day end
+                daily_earnings: dailyEarnings,
+                reward_budget: rewardBudget,
+                reward_budget_used: 0,
+                random_winners_distributed: 0,
+                milestone_rewards_distributed: 0,
+                micro_drops_distributed: 0,
+                wager_buyback_amount: 0,
+                buyback_amount: 0,
+                buyback_distributed: 0,
+                is_calculated: true,
+                is_distributed: false
             })
             .select()
             .single();
@@ -5576,7 +5625,8 @@ async function createTodaysSnapshot() {
         }
 
         console.log(`✅ Created today's snapshot: ID ${newSnapshot.id} for ${today}`);
-        console.log(`   Treasury Balance: ${treasuryBalance} SOL`);
+        console.log(`   Treasury Balance Start: ${treasuryBalance} SOL`);
+        console.log(`   Daily Earnings: ${dailyEarnings} SOL`);
         console.log(`   Reward Budget: ${rewardBudget} SOL`);
 
         return newSnapshot.id;
