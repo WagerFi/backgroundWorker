@@ -315,24 +315,23 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     throw validationError;
                 }
 
-                // FIXED: Build accounts object respecting optional accounts from IDL
+                // ANCHOR JS FIX: Always provide all accounts (Anchor JS doesn't handle optional accounts properly)
+                // Even though IDL marks them as optional, we must provide them all and use treasury placeholders
                 const enhancedAccounts = {
                     wager: enhancedWagerPDA,
                     escrow: enhancedEscrowPDA,
                     winner: new PublicKey(accounts.winnerPubkey),
                     creator: new PublicKey(accounts.creatorPubkey),
                     treasury: new PublicKey(accounts.treasuryPubkey),
+                    // Always provide both referrer accounts (use treasury as placeholder when none exists)
+                    creatorReferrer: accounts.creatorReferrerPubkey && accounts.creatorReferrerPubkey !== accounts.treasuryPubkey ?
+                        new PublicKey(accounts.creatorReferrerPubkey) :
+                        new PublicKey(accounts.treasuryPubkey), // Treasury placeholder (gets 0%)
+                    acceptorReferrer: accounts.acceptorReferrerPubkey && accounts.acceptorReferrerPubkey !== accounts.treasuryPubkey ?
+                        new PublicKey(accounts.acceptorReferrerPubkey) :
+                        new PublicKey(accounts.treasuryPubkey), // Treasury placeholder (gets 0%)
                     authority: authorityKeypair.publicKey,
                 };
-
-                // CRITICAL: Only add referrer accounts if they actually exist (isOptional: true in IDL)
-                // Don't provide treasury placeholders - omit the accounts entirely when no referrer
-                if (accounts.creatorReferrerPubkey && accounts.creatorReferrerPubkey !== accounts.treasuryPubkey) {
-                    enhancedAccounts.creatorReferrer = new PublicKey(accounts.creatorReferrerPubkey);
-                }
-                if (accounts.acceptorReferrerPubkey && accounts.acceptorReferrerPubkey !== accounts.treasuryPubkey) {
-                    enhancedAccounts.acceptorReferrer = new PublicKey(accounts.acceptorReferrerPubkey);
-                }
 
                 console.log(`🔍 Final enhancedAccounts object (with authority):`, JSON.stringify(enhancedAccounts, (key, value) => {
                     if (value && typeof value === 'object' && value.toBase58) {
@@ -412,16 +411,19 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 console.log(`  Provider authority: ${authorityKeypair.publicKey.toString()}`);
                 console.log(`  Keys match: ${enhancedAccounts.authority.equals(authorityKeypair.publicKey)}`);
 
-                // FIXED: Match percentages with optional account presence
-                const creatorPercentage = enhancedAccounts.creatorReferrer ? (args.creatorReferrerPercentage || 0) : 0;
-                const acceptorPercentage = enhancedAccounts.acceptorReferrer ? (args.acceptorReferrerPercentage || 0) : 0;
+                // FIXED: Set percentages based on actual referrers (not placeholders)
+                const hasCreatorReferrer = accounts.creatorReferrerPubkey && accounts.creatorReferrerPubkey !== accounts.treasuryPubkey;
+                const hasAcceptorReferrer = accounts.acceptorReferrerPubkey && accounts.acceptorReferrerPubkey !== accounts.treasuryPubkey;
+
+                const creatorPercentage = hasCreatorReferrer ? (args.creatorReferrerPercentage || 0) : 0;
+                const acceptorPercentage = hasAcceptorReferrer ? (args.acceptorReferrerPercentage || 0) : 0;
 
                 console.log(`🔍 Final arguments:`);
                 console.log(`  Winner: ${args.winner.toLowerCase()}`);
-                console.log(`  Creator referrer percentage: ${creatorPercentage}`);
-                console.log(`  Acceptor referrer percentage: ${acceptorPercentage}`);
-                console.log(`  Creator referrer account provided: ${!!enhancedAccounts.creatorReferrer}`);
-                console.log(`  Acceptor referrer account provided: ${!!enhancedAccounts.acceptorReferrer}`);
+                console.log(`  Creator referrer percentage: ${creatorPercentage} (has referrer: ${hasCreatorReferrer})`);
+                console.log(`  Acceptor referrer percentage: ${acceptorPercentage} (has referrer: ${hasAcceptorReferrer})`);
+                console.log(`  Creator referrer account: ${enhancedAccounts.creatorReferrer.toString()}`);
+                console.log(`  Acceptor referrer account: ${enhancedAccounts.acceptorReferrer.toString()}`);
 
                 result = await anchorProgram.methods
                     .resolveWagerWithReferrals(
