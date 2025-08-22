@@ -328,7 +328,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     acceptorReferrer: accounts.acceptorReferrerPubkey ?
                         new PublicKey(accounts.acceptorReferrerPubkey) :
                         new PublicKey(accounts.treasuryPubkey), // Treasury placeholder (gets 0%)
-                    authority: authorityKeypair.publicKey, // Include authority in accounts like other working instructions
+                    authority: authorityKeypair.publicKey, // Will be updated to fresh keypair public key
                 };
 
                 console.log(`🔍 Final enhancedAccounts object (with authority):`, JSON.stringify(enhancedAccounts, (key, value) => {
@@ -381,6 +381,14 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 console.log(`🔍 Fresh keypair verification:`);
                 console.log(`  Public key matches: ${freshKeypair.publicKey.equals(authorityKeypair.publicKey)}`);
                 console.log(`  Is Keypair instance: ${freshKeypair instanceof Keypair}`);
+
+                // Update the authority account to use the fresh keypair's public key
+                enhancedAccounts.authority = freshKeypair.publicKey;
+
+                console.log(`🔍 Final authority account verification:`);
+                console.log(`  EnhancedAccounts.authority: ${enhancedAccounts.authority.toString()}`);
+                console.log(`  Fresh keypair public key: ${freshKeypair.publicKey.toString()}`);
+                console.log(`  Keys match: ${enhancedAccounts.authority.equals(freshKeypair.publicKey)}`);
 
                 result = await anchorProgram.methods
                     .resolveWagerWithReferrals(
