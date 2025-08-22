@@ -406,15 +406,21 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 console.log(`  Public key: ${authorityKeypair.publicKey.toString()}`);
                 console.log(`  Is Keypair instance: ${authorityKeypair instanceof Keypair}`);
 
-                result = await anchorProgram.methods
+                // Build the transaction
+                const tx = await anchorProgram.methods
                     .resolveWagerWithReferrals(
                         { [args.winner.toLowerCase()]: {} },
                         args.creatorReferrerPercentage || 0,
                         args.acceptorReferrerPercentage || 0
                     )
                     .accounts(enhancedAccounts)
-                    .signers([authorityKeypair])  // Use the same pattern as working instructions
-                    .rpc();
+                    .transaction();
+
+                // Sign the transaction explicitly
+                tx.sign(authorityKeypair);
+
+                // Send the signed transaction
+                result = await anchorProgram.provider.sendAndConfirm(tx, [authorityKeypair]);
                 break;
 
             default:
