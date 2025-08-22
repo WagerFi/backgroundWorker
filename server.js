@@ -345,7 +345,8 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
 
                     treasury: new PublicKey(accounts.treasuryPubkey),
 
-                    // Remove authority from accounts - it will be handled by .signers([authorityKeypair])
+                    // Add authority back - the program requires it in the accounts list
+                    authority: authorityKeypair.publicKey,
                 };
 
                 // Always provide both referrer accounts - use treasury as placeholder when no referrer exists
@@ -357,7 +358,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     acceptorReferrer: enhancedAccounts.acceptorReferrer.toString()
                 });
 
-                console.log(`🔍 Final enhancedAccounts object (authority handled by signers):`, JSON.stringify(enhancedAccounts, (key, value) => {
+                console.log(`🔍 Final enhancedAccounts object (with authority):`, JSON.stringify(enhancedAccounts, (key, value) => {
                     if (value && typeof value === 'object' && value.toBase58) {
                         return value.toBase58();
                     }
