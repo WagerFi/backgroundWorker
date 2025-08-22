@@ -62,11 +62,25 @@ if (AUTHORITY_PRIVATE_KEY) {
         console.log('🔍 Secret key buffer length:', secretKeyBuffer.length);
 
         authorityKeypair = Keypair.fromSecretKey(secretKeyBuffer);
+
+        // Add signTransaction method to authorityKeypair for Anchor compatibility
+        authorityKeypair.signTransaction = async (tx) => {
+            tx.sign(authorityKeypair);
+            return tx;
+        };
+
+        authorityKeypair.signAllTransactions = async (txs) => {
+            txs.forEach(tx => tx.sign(authorityKeypair));
+            return txs;
+        };
+
         console.log('🔍 Keypair created successfully');
         console.log('🔍 Public key:', authorityKeypair.publicKey.toString());
         console.log('🔍 Is Keypair instance:', authorityKeypair instanceof Keypair);
         console.log('🔍 Has secretKey property:', !!authorityKeypair.secretKey);
         console.log('🔍 SecretKey length:', authorityKeypair.secretKey?.length || 'undefined');
+        console.log('🔍 Has signTransaction method:', typeof authorityKeypair.signTransaction === 'function');
+        console.log('🔍 Has signAllTransactions method:', typeof authorityKeypair.signAllTransactions === 'function');
     } catch (error) {
         console.error('❌ Error creating keypair:', error);
         process.exit(1);
