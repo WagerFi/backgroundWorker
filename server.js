@@ -764,10 +764,8 @@ app.post('/admin/schedule-todays-rewards', async (req, res) => {
             .delete()
             .eq('reward_date', today);
 
-        // Schedule buyback at next minute
-        const now = new Date();
-        const nextMinute = new Date(now.getTime() + 2 * 60 * 1000); // 2 minutes from now
-        const buybackTime = `${nextMinute.getHours().toString().padStart(2, '0')}:${nextMinute.getMinutes().toString().padStart(2, '0')}:00`;
+        // Schedule buyback at 00:01 AM (consistent with automatic scheduling)
+        const buybackTime = '00:01:00';
 
         await scheduleReward(today, buybackTime, 'wager_buyback', (rewardBudget * 25) / 100, 0.25, null, 'FPBUsH6tJgRaUu6diyS2AuwvXESrA9MPqJ9cov15boPQ');
 
