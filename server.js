@@ -4803,6 +4803,36 @@ app.listen(PORT, () => {
 // REWARD SYSTEM IMPLEMENTATION
 // ============================================================================
 
+// Update daily_wager_counts table to mark milestone as reached and store both creator/acceptor user info
+async function updateMilestoneInDailyCount(milestoneCount, creatorId, acceptorId, wagerId, date) {
+    try {
+        // Create the update object dynamically based on milestone count
+        // Store both creator and acceptor since they both get rewards
+        const updateFields = {
+            [`milestone_${milestoneCount}_reached`]: true,
+            [`milestone_${milestoneCount}_creator_user_id`]: creatorId,
+            [`milestone_${milestoneCount}_acceptor_user_id`]: acceptorId,
+            [`milestone_${milestoneCount}_wager_id`]: wagerId,
+            updated_at: new Date().toISOString()
+        };
+
+        const { error } = await supabase
+            .from('daily_wager_counts')
+            .update(updateFields)
+            .eq('wager_date', date);
+
+        if (error) {
+            console.error(`❌ Error updating milestone ${milestoneCount} in daily_wager_counts:`, error);
+            return;
+        }
+
+        console.log(`✅ Updated daily_wager_counts: milestone_${milestoneCount}_reached = true, creator = ${creatorId}, acceptor = ${acceptorId}`);
+
+    } catch (error) {
+        console.error(`❌ Error in updateMilestoneInDailyCount for milestone ${milestoneCount}:`, error);
+    }
+}
+
 // Check and award milestone rewards for new 10-milestone system
 // Each milestone: 1.5% total (0.75% creator + 0.75% acceptor)
 async function checkMilestoneRewards(creatorId, acceptorId, wagerId) {
@@ -4839,6 +4869,11 @@ async function checkMilestoneRewards(creatorId, acceptorId, wagerId) {
         for (const milestone of milestones) {
             if (currentCount >= milestone.count && !milestone.reached) {
                 console.log(`🎉 MILESTONE REACHED! ${milestone.name} wager of the day (${currentCount} total)`);
+
+                // Update daily_wager_counts to mark milestone as reached and store both creator/acceptor info
+                await updateMilestoneInDailyCount(milestone.count, creatorId, acceptorId, wagerId, today);
+
+                // Schedule milestone rewards
                 await scheduleMilestoneReward(creatorId, acceptorId, milestone.name, currentCount);
             }
         }
