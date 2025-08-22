@@ -423,7 +423,13 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 console.log(`  Public key: ${authorityKeypair.publicKey.toString()}`);
                 console.log(`  Is Keypair instance: ${authorityKeypair instanceof Keypair}`);
 
-                // Use the EXACT same pattern as handleExpiredWager
+                // Ensure we're using a fresh, properly constructed keypair (FROM OLD WORKING CODE)
+                const freshKeypair = Keypair.fromSecretKey(authorityKeypair.secretKey);
+                console.log(`🔍 Fresh keypair verification:`);
+                console.log(`  Public key matches: ${freshKeypair.publicKey.equals(authorityKeypair.publicKey)}`);
+                console.log(`  Is Keypair instance: ${freshKeypair instanceof Keypair}`);
+
+                // Use the EXACT same pattern as the OLD WORKING CODE
                 result = await anchorProgram.methods
                     .resolveWagerWithReferrals(
                         { [args.winner.toLowerCase()]: {} },
@@ -431,7 +437,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                         args.acceptorReferrerPercentage || 0
                     )
                     .accounts(enhancedAccounts)
-                    .signers([authorityKeypair])
+                    .signers([freshKeypair])
                     .rpc();
                 break;
 
