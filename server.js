@@ -284,13 +284,8 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     const cleanEscrowPda = accounts.escrowPda.trim();
                     console.log(`🔍 Cleaned escrowPda: "${cleanEscrowPda}"`);
 
-                    // Derive wager PDA from wagerId (this creates the correct wager account type)
-                    enhancedWagerPDA = PublicKey.findProgramAddressSync(
-                        [Buffer.from("wager"), Buffer.from(accounts.wagerId)],
-                        WAGERFI_PROGRAM_ID
-                    )[0];
-
-                    // Use escrow address from database for escrow account
+                    // Use the SAME pattern as working instructions - direct PublicKey objects
+                    enhancedWagerPDA = new PublicKey(accounts.wagerId);
                     enhancedEscrowPDA = new PublicKey(cleanEscrowPda);
                     console.log(`✅ Successfully created PublicKey objects`);
                 } catch (error) {
