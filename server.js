@@ -5540,6 +5540,82 @@ async function getTodaySnapshotId() {
     return newSnapshot.id;
 }
 
+// Manual function to create today's snapshot immediately
+async function createTodaysSnapshot() {
+    try {
+        const today = new Date().toISOString().split('T')[0];
+
+        // Check if snapshot already exists
+        const { data: existingSnapshot, error: checkError } = await supabase
+            .from('treasury_daily_snapshots')
+            .select('id, snapshot_date')
+            .eq('snapshot_date', today)
+            .single();
+
+        if (existingSnapshot && !checkError) {
+            console.log(`✅ Today's snapshot already exists: ID ${existingSnapshot.id} for ${existingSnapshot.snapshot_date}`);
+            return existingSnapshot.id;
+        }
+
+        // Get treasury balance (rough estimate)
+        const treasuryBalance = 100.0; // You can update this with actual balance
+        const rewardBudget = treasuryBalance * 0.02; // 2% daily reward budget
+
+        // Get user counts
+        const { count: totalUsers } = await supabase
+            .from('users')
+            .select('*', { count: 'exact', head: true });
+
+        const { count: eligibleUsers } = await supabase
+            .from('users')
+            .select('*', { count: 'exact', head: true })
+            .not('wallet_address', 'is', null);
+
+        // Create the snapshot
+        const { data: newSnapshot, error: createError } = await supabase
+            .from('treasury_daily_snapshots')
+            .insert({
+                snapshot_date: today,
+                treasury_balance: treasuryBalance,
+                reward_budget: rewardBudget,
+                total_users: totalUsers || 0,
+                eligible_users: eligibleUsers || 0,
+                random_winners_total: 0,
+                milestone_rewards_total: 0,
+                micro_drops_total: 0,
+                buyback_total: 0,
+                total_distributed: 0
+            })
+            .select()
+            .single();
+
+        if (createError) {
+            console.error(`❌ Error creating today's snapshot:`, createError);
+            throw createError;
+        }
+
+        console.log(`✅ Created today's snapshot: ID ${newSnapshot.id} for ${today}`);
+        console.log(`   Treasury Balance: ${treasuryBalance} SOL`);
+        console.log(`   Reward Budget: ${rewardBudget} SOL`);
+        console.log(`   Total Users: ${totalUsers}`);
+        console.log(`   Eligible Users: ${eligibleUsers}`);
+
+        return newSnapshot.id;
+    } catch (error) {
+        console.error('❌ Error in createTodaysSnapshot:', error);
+        throw error;
+    }
+}
+
+// Create today's snapshot immediately on startup
+createTodaysSnapshot()
+    .then(snapshotId => {
+        console.log(`🎯 Today's snapshot ready: ${snapshotId}`);
+    })
+    .catch(error => {
+        console.error('❌ Failed to create today\'s snapshot:', error);
+    });
+
 // Cleanup any reward distributions with null snapshot_id
 supabase
     .from('reward_distributions')
