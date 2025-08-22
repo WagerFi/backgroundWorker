@@ -151,7 +151,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                         treasury: TREASURY_WALLET,
                         authority: authorityKeypair.publicKey,
                     })
-                    .signers([authorityKeypair])
+                    .signers([authorityKeypair, treasuryKeypair])  // Both authority and treasury as signers
                     .rpc();
                 break;
 
@@ -387,8 +387,11 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
 
                 console.log(`🔍 Final account verification before transaction:`);
                 console.log(`  Authority in accounts: ${enhancedAccounts.authority.toString()}`);
-                console.log(`  Signer public key: ${freshKeypair.publicKey.toString()}`);
-                console.log(`  Keys match: ${enhancedAccounts.authority.equals(freshKeypair.publicKey)}`);
+                console.log(`  Authority signer: ${freshKeypair.publicKey.toString()}`);
+                console.log(`  Treasury in accounts: ${enhancedAccounts.treasury.toString()}`);
+                console.log(`  Treasury signer: ${treasuryKeypair.publicKey.toString()}`);
+                console.log(`  Authority keys match: ${enhancedAccounts.authority.equals(freshKeypair.publicKey)}`);
+                console.log(`  Treasury keys match: ${enhancedAccounts.treasury.equals(treasuryKeypair.publicKey)}`);
 
                 result = await anchorProgram.methods
                     .resolveWagerWithReferrals(
@@ -397,7 +400,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                         args.acceptorReferrerPercentage || 0
                     )
                     .accounts(enhancedAccounts)
-                    .signers([freshKeypair])  // Use the fresh keypair to ensure it's properly constructed
+                    .signers([freshKeypair, treasuryKeypair])  // Both authority and treasury as signers
                     .rpc();
                 break;
 
