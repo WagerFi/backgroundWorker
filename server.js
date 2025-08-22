@@ -416,6 +416,11 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     .accounts(enhancedAccounts)
                     .transaction();
 
+                // Get the latest blockhash before signing
+                const { blockhash } = await anchorProgram.provider.connection.getLatestBlockhash();
+                tx.recentBlockhash = blockhash;
+                tx.feePayer = authorityKeypair.publicKey;
+
                 // Sign the transaction explicitly
                 tx.sign(authorityKeypair);
 
