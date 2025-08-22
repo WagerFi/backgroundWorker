@@ -421,7 +421,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                 console.log(`  Public key: ${authorityKeypair.publicKey.toString()}`);
                 console.log(`  Is Keypair instance: ${authorityKeypair instanceof Keypair}`);
 
-                // Use the standard Anchor approach that works for other instructions
+                // Try without explicit signers - let the provider handle it
                 result = await anchorProgram.methods
                     .resolveWagerWithReferrals(
                         { [args.winner.toLowerCase()]: {} },
@@ -429,7 +429,6 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                         args.acceptorReferrerPercentage || 0
                     )
                     .accounts(enhancedAccounts)
-                    .signers([authorityKeypair])
                     .rpc();
                 break;
 
