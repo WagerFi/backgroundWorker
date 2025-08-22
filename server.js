@@ -347,20 +347,37 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                     throw validationError;
                 }
 
+                // CRITICAL FIX: Use array order instead of object to ensure correct account positioning
+                // IDL expects: [wager, escrow, winner, creator, treasury, creatorReferrer, acceptorReferrer, authority]
+                const enhancedAccountsArray = [
+                    enhancedWagerPDA,                                    // 0: wager
+                    enhancedEscrowPDA,                                   // 1: escrow  
+                    new PublicKey(accounts.winnerPubkey),                // 2: winner
+                    new PublicKey(accounts.creatorPubkey),               // 3: creator
+                    new PublicKey(accounts.treasuryPubkey),              // 4: treasury
+                    accounts.creatorReferrerPubkey ?                     // 5: creatorReferrer
+                        new PublicKey(accounts.creatorReferrerPubkey) :
+                        new PublicKey(accounts.treasuryPubkey),
+                    accounts.acceptorReferrerPubkey ?                    // 6: acceptorReferrer
+                        new PublicKey(accounts.acceptorReferrerPubkey) :
+                        new PublicKey(accounts.treasuryPubkey),
+                    authorityKeypair.publicKey                           // 7: authority (LAST POSITION)
+                ];
+
+                // Keep the object for logging purposes
                 const enhancedAccounts = {
                     wager: enhancedWagerPDA,
                     escrow: enhancedEscrowPDA,
                     winner: new PublicKey(accounts.winnerPubkey),
-                    creator: new PublicKey(accounts.creatorPubkey), // Add creator for rent reclaim
+                    creator: new PublicKey(accounts.creatorPubkey),
                     treasury: new PublicKey(accounts.treasuryPubkey),
-                    // Always provide both referrer accounts (use treasury as placeholder when none exists)
                     creatorReferrer: accounts.creatorReferrerPubkey ?
                         new PublicKey(accounts.creatorReferrerPubkey) :
-                        new PublicKey(accounts.treasuryPubkey), // Treasury placeholder (gets 0%)
+                        new PublicKey(accounts.treasuryPubkey),
                     acceptorReferrer: accounts.acceptorReferrerPubkey ?
                         new PublicKey(accounts.acceptorReferrerPubkey) :
-                        new PublicKey(accounts.treasuryPubkey), // Treasury placeholder (gets 0%)
-                    authority: authorityKeypair.publicKey, // Will be updated to fresh keypair public key
+                        new PublicKey(accounts.treasuryPubkey),
+                    authority: authorityKeypair.publicKey,
                 };
 
                 console.log(`🔍 Final enhancedAccounts object (with authority):`, JSON.stringify(enhancedAccounts, (key, value) => {
@@ -416,11 +433,18 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
 
                 // Update the authority account to use the fresh keypair's public key
                 enhancedAccounts.authority = freshKeypair.publicKey;
+                enhancedAccountsArray[7] = freshKeypair.publicKey; // Update array position 7 (authority)
 
                 console.log(`🔍 Final authority account verification:`);
                 console.log(`  EnhancedAccounts.authority: ${enhancedAccounts.authority.toString()}`);
                 console.log(`  Fresh keypair public key: ${freshKeypair.publicKey.toString()}`);
                 console.log(`  Keys match: ${enhancedAccounts.authority.equals(freshKeypair.publicKey)}`);
+
+                console.log(`🔍 Account array order (CRITICAL for IDL positioning):`);
+                enhancedAccountsArray.forEach((account, index) => {
+                    const accountName = ['wager', 'escrow', 'winner', 'creator', 'treasury', 'creatorReferrer', 'acceptorReferrer', 'authority'][index];
+                    console.log(`  ${index}: ${accountName} = ${account.toString()}`);
+                });
 
                 // Add comprehensive transaction debugging
                 console.log(`🔍 Transaction execution debug:`);
@@ -468,7 +492,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                             args.creatorReferrerPercentage || 0,
                             args.acceptorReferrerPercentage || 0
                         )
-                        .accounts(enhancedAccounts)
+                        .accounts(enhancedAccountsArray) // Use array for correct order
                         .transaction();
 
                     console.log(`  ✅ Manual transaction built successfully`);
@@ -538,7 +562,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                                 args.creatorReferrerPercentage || 0,
                                 args.acceptorReferrerPercentage || 0
                             )
-                            .accounts(enhancedAccounts)
+                            .accounts(enhancedAccountsArray) // Use array for correct order
                             .transaction();
 
                         console.log(`  ✅ Anchor transaction built successfully`);
@@ -595,7 +619,7 @@ async function executeProgramInstruction(instructionName, accounts, args = []) {
                                 args.creatorReferrerPercentage || 0,
                                 args.acceptorReferrerPercentage || 0
                             )
-                            .accounts(enhancedAccounts)
+                            .accounts(enhancedAccountsArray) // Use array for correct order
                             .signers([freshKeypair])
                             .rpc();
                     }
