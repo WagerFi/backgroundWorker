@@ -1086,6 +1086,16 @@ app.post('/resolve-crypto-wager', async (req, res) => {
             })
             .eq('id', wager.id);
 
+        // Add the resolution price to the wager's chart data
+        try {
+            const { addWagerResolutionPrice } = await import('../src/lib/wagers.js');
+            await addWagerResolutionPrice(wager.id, resolutionPrice);
+            console.log(`🔒 Added resolution price $${resolutionPrice} to chart data for wager ${wager_id}`);
+        } catch (chartError) {
+            console.error(`⚠️ Failed to add resolution price to chart data:`, chartError);
+            // Don't fail the entire resolution if chart update fails
+        }
+
         if (updateError) {
             console.error(`❌ Error updating wager ${wager_id}:`, updateError);
             return res.status(500).json({ error: 'Failed to update database' });
@@ -1544,7 +1554,7 @@ function getReferralPercentage(level) {
 }
 
 // Update wager status in database after resolution
-async function updateWagerStatus(wager, status, winnerPosition, signature) {
+async function updateWagerStatus(wager, status, winnerPosition, signature, resolutionPrice = null) {
     try {
         const tableName = wager.token_symbol ? 'crypto_wagers' : 'sports_wagers';
         const winnerId = winnerPosition === 'creator' ? wager.creator_id : wager.acceptor_id;
@@ -1568,7 +1578,7 @@ async function updateWagerStatus(wager, status, winnerPosition, signature) {
 
         // Add crypto-specific fields
         if (tableName === 'crypto_wagers') {
-            updateData.resolution_price = wager.target_price; // Use stored price
+            updateData.resolution_price = resolutionPrice || wager.target_price; // Use provided resolution price or fallback
             updateData.resolution_time = new Date().toISOString();
         }
 
@@ -1588,6 +1598,18 @@ async function updateWagerStatus(wager, status, winnerPosition, signature) {
         }
 
         console.log(`✅ Updated ${tableName} wager ${wager.wager_id} status to ${status}`);
+
+        // Add the resolution price to the wager's chart data for crypto wagers
+        if (tableName === 'crypto_wagers' && resolutionPrice) {
+            try {
+                const { addWagerResolutionPrice } = await import('../src/lib/wagers.js');
+                await addWagerResolutionPrice(wager.id, resolutionPrice);
+                console.log(`🔒 Added resolution price $${resolutionPrice} to chart data for wager ${wager.wager_id}`);
+            } catch (chartError) {
+                console.error(`⚠️ Failed to add resolution price to chart data:`, chartError);
+                // Don't fail the entire resolution if chart update fails
+            }
+        }
 
     } catch (error) {
         console.error(`❌ Error in updateWagerStatus:`, error);
@@ -1633,7 +1655,9 @@ async function resolveWagerWithReferrals(wager, winnerPosition, wagerType) {
         }
 
         // 3. Update database with resolution
-        await updateWagerStatus(wager, 'resolved', winnerPosition, onChainResult.signature);
+        // For crypto wagers, we need to pass the resolution price
+        const resolutionPrice = wagerType === 'crypto' ? wager.resolution_price || wager.target_price : null;
+        await updateWagerStatus(wager, 'resolved', winnerPosition, onChainResult.signature, resolutionPrice);
 
         // 4. Update referrer stats in database (referral payouts already happened on-chain)
         if (creatorReferrer) {
@@ -3176,6 +3200,16 @@ async function resolveExpiredMatchedWager(wager) {
             if (updateError) {
                 console.error(`❌ Error updating wager ${wager.wager_id}:`, updateError);
             } else {
+                // Add the resolution price to the wager's chart data
+                try {
+                    const { addWagerResolutionPrice } = await import('../src/lib/wagers.js');
+                    await addWagerResolutionPrice(wager.id, expiryPrice);
+                    console.log(`🔒 Added resolution price $${expiryPrice} to chart data for wager ${wager.wager_id}`);
+                } catch (chartError) {
+                    console.error(`⚠️ Failed to add resolution price to chart data:`, chartError);
+                    // Don't fail the entire resolution if chart update fails
+                }
+
                 // Create notification for winner using the new database function
                 const winnerWalletAddress = winnerPosition === 'creator' ? wager.creator_address : wager.acceptor_address;
                 const loserWalletAddress = winnerPosition === 'creator' ? wager.acceptor_address : wager.creator_address;
@@ -3932,6 +3966,16 @@ async function resolveExpiringCryptoWagers() {
                     if (updateError) {
                         console.error(`❌ Error updating wager ${wager.wager_id}:`, updateError);
                     } else {
+                        // Add the resolution price to the wager's chart data
+                        try {
+                            const { addWagerResolutionPrice } = await import('../src/lib/wagers.js');
+                            await addWagerResolutionPrice(wager.id, expiryPrice);
+                            console.log(`🔒 Added resolution price $${expiryPrice} to chart data for wager ${wager.wager_id}`);
+                        } catch (chartError) {
+                            console.error(`⚠️ Failed to add resolution price to chart data:`, chartError);
+                            // Don't fail the entire resolution if chart update fails
+                        }
+
                         // Create notification for winner
                         await createNotification(winnerId, 'wager_resolved',
                             'Wager Resolved!',
