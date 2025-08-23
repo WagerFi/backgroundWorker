@@ -4672,6 +4672,51 @@ app.post('/token-info', async (req, res) => {
     }
 });
 
+// Get current token price by ID from CoinMarketCap (for charts)
+app.post('/token-price', async (req, res) => {
+    try {
+        const { apiKey, tokenId } = req.body;
+
+        if (!apiKey || !tokenId) {
+            return res.status(400).json({ error: 'API key and token ID are required' });
+        }
+
+        console.log(`💰 Fetching current price for token ID: ${tokenId}`);
+
+        // Fetch from CoinMarketCap API
+        const response = await fetch(
+            `https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?id=${tokenId}`,
+            {
+                headers: {
+                    'X-CMC_PRO_API_KEY': apiKey,
+                    'Accept': 'application/json'
+                }
+            }
+        );
+
+        if (!response.ok) {
+            throw new Error(`CoinMarketCap API error: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (data.data && data.data[tokenId] && data.data[tokenId].quote && data.data[tokenId].quote.USD) {
+            const price = data.data[tokenId].quote.USD.price;
+            console.log(`✅ Token ${tokenId} current price: $${price}`);
+            res.json({ price: price });
+        } else {
+            throw new Error('No valid price data found in response');
+        }
+
+    } catch (error) {
+        console.error('❌ Error in token-price endpoint:', error);
+        res.status(500).json({
+            error: 'Failed to fetch token price',
+            details: error.message
+        });
+    }
+});
+
 // Start the server
 app.listen(PORT, () => {
     console.log(`🚀 WagerFi Background Worker running on port ${PORT}`);
