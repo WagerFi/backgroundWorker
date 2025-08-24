@@ -4938,10 +4938,25 @@ async function incrementDailyWagerCount() {
         await ensureDailyWagerCountExists(today);
 
         // Increment the wager count
+        // First get the current count, then increment it
+        const { data: currentData, error: selectError } = await supabase
+            .from('daily_wager_counts')
+            .select('wager_count')
+            .eq('wager_date', today)
+            .single();
+
+        if (selectError) {
+            console.error(`❌ Error getting current wager count for ${today}:`, selectError);
+            return;
+        }
+
+        const currentCount = currentData?.wager_count || 0;
+        const newCount = currentCount + 1;
+
         const { error } = await supabase
             .from('daily_wager_counts')
             .update({
-                wager_count: supabase.sql`wager_count + 1`,
+                wager_count: newCount,
                 updated_at: new Date().toISOString()
             })
             .eq('wager_date', today);
